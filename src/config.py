@@ -40,12 +40,6 @@ CONFIG = {
                 "infer_dim": 640,
                 "labels": ["person"],
             },
-            "face": {
-                "enabled": True,
-                "config": "configs/sgie_face.txt",  # process-mode=2, operate-on-gie-id=1(human)
-                "infer_dim": 256,
-                "labels": ["face"],
-            },
         },
         "tracker": {
             "config": "configs/tracker.yml",  # 알고리즘 설정만 우리가 제공, .so는 DeepStream 번들 사용

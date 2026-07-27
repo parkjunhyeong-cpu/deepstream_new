@@ -72,7 +72,7 @@ def _build_pgie(model_cfg: dict, num_sources: int) -> Gst.Element:
 
 def _build_tracker(tracker_cfg: dict) -> Gst.Element:
     """PGIE가 찾은 박스들에 프레임을 넘나드는 고유 object-id를 붙인다. 좌표는 안 바꾸고
-    identity만 유지시켜서, 뒤의 SGIE/분석이 '같은 사람'을 프레임마다 이어서 볼 수 있게 한다.
+    identity만 유지시켜서 '같은 사람'을 프레임마다 이어서 볼 수 있게 한다 (예: 중복 카운트 방지).
     ll-lib-file은 DeepStream 번들 라이브러리, ll-config-file만 프로젝트가 제공한다."""
     tracker = Gst.ElementFactory.make("nvtracker", "tracker")
     tracker.set_property("tracker-width", tracker_cfg["width"])
@@ -83,25 +83,6 @@ def _build_tracker(tracker_cfg: dict) -> Gst.Element:
 
     logger.info("tracker: %s (%dx%d)", tracker_cfg["config"], tracker_cfg["width"], tracker_cfg["height"])
     return tracker
-
-
-def _build_sgie(model_cfg: dict) -> Gst.Element:
-    """2차 추론(SGIE). PGIE(+tracker)가 찾은 객체를 잘라서 그 위에 다시 추론한다.
-    어느 GIE의 객체를 대상으로 할지(operate-on-gie-id)와 process-mode는 config txt 안에
-    이미 들어있으므로 여기서는 건드리지 않고, 세팅 후 값을 읽어서 검증만 한다."""
-    sgie = Gst.ElementFactory.make("nvinfer", "sgie")
-    sgie.set_property("config-file-path", resolve(model_cfg["config"]))
-
-    process_mode = sgie.get_property("process-mode")
-    unique_id = sgie.get_property("unique-id")
-    if process_mode != 2:
-        logger.warning(
-            "%s의 process-mode=%d — SGIE(2)가 아닙니다. config 파일을 확인하세요",
-            model_cfg["config"], process_mode,
-        )
-
-    logger.info("sgie: %s (unique-id=%d)", model_cfg["config"], unique_id)
-    return sgie
 
 
 def _build_osd() -> Gst.Element:
@@ -173,8 +154,8 @@ def build_pipeline(cfg: dict, encode: bool = True) -> tuple[Gst.Pipeline, Gst.El
     """source_bin*N -> streammux -> pgie(human) -> tiler -> osd
     -> (nvvideoconvert -> jpegenc -> appsink | fakesink).
 
-    TODO: tracker + sgie(face)는 configs/tracker.yml / 얼굴 모델 준비되면 pgie와 tiler 사이에
-    다시 끼워 넣는다 (_build_tracker/_build_sgie는 구현돼 있으니 build_pipeline만 고치면 됨).
+    TODO: tracker는 configs/tracker.yml 준비되면 pgie와 tiler 사이에 끼워 넣는다
+    (_build_tracker는 구현돼 있으니 build_pipeline만 고치면 됨). SGIE(얼굴)는 안 하기로 함.
 
     소스가 1개든 N개든 같은 경로를 탄다 — N=1이면 tiler가 1x1이 될 뿐이다.
     encode=False면 인코딩 없이 fakesink로 받아 소스 연결/FPS만 확인한다.

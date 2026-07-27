@@ -6,18 +6,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This is a from-scratch reimplementation of a DeepStream RTSP inference pipeline (`SOLUTION_DeepStream`'s pipeline core, stripped down). The full target design, config schema, milestone plan, and known pitfalls are written out in **[NEW_PIPELINE_GUIDE.md](NEW_PIPELINE_GUIDE.md) — read it before doing any pipeline work**, it is the authoritative spec, not just background reading.
 
-The repo is currently at an early milestone: `src/main.py` is a temporary CLI for verifying source connection and JPEG encoding, not the real pipeline entrypoint yet. Do not assume `config.yaml`, `pipeline.py`, or `webview.py` exist until they've actually been created — check first.
+**`control-api` is a separate Node.js service maintained outside this repo** — it is not implemented here. This repo only has the client side: `proto/control_api.proto` (the shared contract — protobuf is language-agnostic, so this same file is what the Node.js server should codegen from too) and `src/control_api.py` (Python gRPC client: `fetch_config()`, `ConfigWatcher`). `src/main.py` is the pipeline entrypoint: on startup it calls `control_api.fetch_config()` to get the `input` config from wherever control-api is reachable (`CONTROL_API_HOST`/`CONTROL_API_PORT` env vars), builds the pipeline, serves the MJPEG viewer (`webview.py`), and subscribes to config changes via `control_api.ConfigWatcher` (a `WatchConfig` streaming RPC). There is no `config.yaml` — `src/config.py` holds a hardcoded `DEFAULT_CONFIG` (pipeline/output sections) plus `compute_derived()`; `src/state.py` merges that with whatever `input` config control-api gave. Don't assume any other file exists until verified — check first.
 
 ## Environment
 
-This code only runs inside the DeepStream container (`nvcr.io/nvidia/deepstream:8.0-triton-multiarch`, see [Dockerfile](Dockerfile)). `pyds`, `gi`/`Gst`/`GLib` (PyGObject), and the custom parser `.so` files under `plugins/` are not available outside it — you cannot execute or unit-test pipeline code in this environment. Static review, and asking the user to run/verify on the actual GPU box, is the expected workflow.
+This code only runs inside the DeepStream container (`nvcr.io/nvidia/deepstream:8.0-triton-multiarch`, see [Dockerfile](Dockerfile)). `pyds`, `gi`/`Gst`/`GLib` (PyGObject), and the custom parser `.so` files under `plugins/` are not available outside it — you cannot execute or unit-test pipeline code in this environment. Static review, and asking the user to run/verify on the actual GPU box, is the expected workflow. This also needs a control-api instance reachable at `CONTROL_API_HOST:CONTROL_API_PORT` to start at all (it blocks on `GetConfig` at startup) — that's a separate Node.js service/repo, not something to stand up from here.
 
 ## Commands
 
-- Build image: `docker build -t deepstream-new .`
-- Run the current temp entrypoint (inside the container):
-  - `python3 src/main.py source <rtsp-uri>` — connects a source bin and logs fps only
-  - `python3 src/main.py encode <rtsp-uri> --out /tmp/preview.jpg` — adds jpeg encode + appsink, writes a preview frame once/sec
+- Build image: `docker build -t deepstream-new .`, run with `CONTROL_API_HOST`/`CONTROL_API_PORT` env vars pointing at wherever the real control-api runs (no `docker-compose.yml` in this repo — not needed while control-api is developed separately)
+- Run (inside the container):
+  - `python3 src/main.py` — full pipeline + MJPEG viewer (`:8810`)
+  - `python3 src/main.py --fakesink` — skip encoding/web, just verify source connection + fps
+- Regenerate gRPC stubs after editing `proto/control_api.proto` (not committed, see `.gitignore`) — done automatically at Docker build time, or manually:
+  `python3 -m grpc_tools.protoc -I proto --python_out=src/pb --grpc_python_out=src/pb proto/control_api.proto`
 - No lint config or test suite exists yet in this repo — don't assume `pytest`/`ruff`/etc. are wired up; check before referencing them.
 
 ## Architecture
@@ -29,7 +31,12 @@ source_bin[0..N] → nvstreammux → (nvdspreprocess → nvinfer)×PGIE → nvtr
                                 → nvmultistreamtiler → nvdsosd → nvvideoconvert → output
 ```
 
-Everything is driven by a single fixed YAML config (`input`/`pipeline`/`output` sections); there is no gRPC control-api, hot reload, or model registry in this rebuild — those are explicitly out of scope (guide §0, §7). Output is served directly from the Python process as MJPEG-over-HTTP (`multipart/x-mixed-replace`), not shipped out via SHM/UDS to a separate stream server.
+Config schema follows `input`/`pipeline`/`output` sections (no YAML — see `src/config.py`/`src/state.py` above). **Update, not in the original guide's scope**: a gRPC control-api (Node.js, separate repo — not here, see `proto/control_api.proto` + Project overview above) now exists, added deliberately as a learning exercise for gRPC, not because the pipeline needed it. It owns the `input` config (sources/resize/framerate/reconnect) as the single source of truth:
+- `GetConfig` — pipeline calls this once at startup (`control_api.fetch_config()`)
+- `WatchConfig` — server-streaming RPC; pipeline subscribes (`control_api.ConfigWatcher`) and gets pushed the new config whenever `SetConfig` is called by some other client
+- **No in-process hot reload.** On a config push, the pipeline does a **cold restart**: `state.request_restart()` + `loop.quit()`, the process exits with a non-zero code, and `docker-compose.yml`'s `restart: on-failure` relaunches it — which calls `GetConfig` again and picks up the new value. This deliberately avoids ever calling `pipeline.set_state(Gst.State.NULL)` mid-process-life beyond normal shutdown, sidestepping the NVIDIA-plugin teardown segfault risk (guide's known pitfall #1) while still getting config updates applied. Full in-place hot reload / model registry are still out of scope (guide §0, §7).
+
+Output is served directly from the Python process as MJPEG-over-HTTP (`multipart/x-mixed-replace`), not shipped out via SHM/UDS to a separate stream server.
 
 A few non-obvious constraints carried over from the original implementation (guide §9 has the full list):
 - PGIE vs SGIE is decided by `process-mode` in the `configs/*.txt` nvinfer config, not hardcoded.

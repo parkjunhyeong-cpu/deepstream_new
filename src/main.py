@@ -1,9 +1,13 @@
 """
-3단계: 고정 config 기반 파이프라인 실행.
-소스/해상도/fps는 config.py의 CONFIG에서만 온다 — 실행 인자로 받지 않는다.
-element 조립은 sources.py / pipeline.py가 담당하고, 여기서는 실행(Gst.init, GLib 루프, bus)만 한다.
+3단계: control-api(별도 컨테이너)에서 받은 설정으로 파이프라인 실행.
 
-실행 (DeepStream 컨테이너 안에서):
+시작 시 control_api.fetch_config()로 초기 설정을 받고, ConfigWatcher로 이후 변경을
+구독한다. 변경이 오면 파이프라인을 그 자리에서 고치지 않고 cold restart한다 —
+GLib 루프를 끝내고 비정상 종료 코드로 죽어서, 외부(docker restart policy)가
+다시 띄우면 그때 fetch_config()가 새 값을 받아온다. NVIDIA 플러그인이
+set_state(NULL) 전환 시 종종 segfault 나는 문제(가이드 알려진 함정)를 이렇게 피한다.
+
+실행 (DeepStream 컨테이너 안에서, control-api가 먼저 떠 있어야 함):
     python3 src/main.py                     # http://<host>:8810 에서 영상 확인
     python3 src/main.py --fakesink          # 인코딩/웹 없이 소스 연결과 FPS만 확인
 """
@@ -17,7 +21,9 @@ import gi
 gi.require_version("Gst", "1.0")
 from gi.repository import GLib, Gst
 
-from config import PROJECT_ROOT, get_config
+import control_api
+import state
+from config import PROJECT_ROOT
 from logger import get_logger
 from pipeline import build_pipeline
 from probes import add_detection_probe, add_fps_probe
@@ -65,14 +71,28 @@ class SigintHandler:
         self.loop.quit()
 
 
+class ConfigChangeHandler:
+    """ConfigWatcher가 변경을 감지하면 호출된다 — state에 반영하고 재시작을 요청한다."""
+
+    def __init__(self, loop: GLib.MainLoop):
+        self.loop = loop
+
+    def __call__(self, new_input: dict) -> None:
+        state.apply_input_config(new_input)
+        state.request_restart()
+        self.loop.quit()
+
+
 def main() -> int:
-    parser = argparse.ArgumentParser(description="고정 config 기반 파이프라인 실행")
+    parser = argparse.ArgumentParser(description="control-api 기반 파이프라인 실행")
     parser.add_argument(
         "--fakesink", action="store_true", help="인코딩/웹 없이 소스 연결과 FPS만 확인"
     )
     args = parser.parse_args()
 
-    cfg = get_config()
+    initial_input = control_api.fetch_config()
+    state.apply_input_config(initial_input)
+    cfg = state.get_config()
 
     Gst.init(None)
     pipeline, pgie, sink = build_pipeline(cfg, encode=not args.fakesink)
@@ -92,6 +112,9 @@ def main() -> int:
 
     signal.signal(signal.SIGINT, SigintHandler(loop))
 
+    watcher = control_api.ConfigWatcher(ConfigChangeHandler(loop))
+    watcher.start()
+
     if webview is not None:
         webview.start()
     pipeline.set_state(Gst.State.PLAYING)
@@ -101,6 +124,10 @@ def main() -> int:
         pipeline.set_state(Gst.State.NULL)
         if webview is not None:
             webview.stop()
+
+    if state.restart_requested():
+        logger.info("설정 변경으로 cold restart — 비정상 종료 코드로 죽어서 외부가 재기동하게 함")
+        return 1
 
     return 0
 

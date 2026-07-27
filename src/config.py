@@ -1,8 +1,8 @@
-"""고정 설정.
+"""기본 설정값 + derived 계산 로직.
 
-3단계까지는 config.yaml 로딩 없이 이 파일의 CONFIG 하나만 쓴다.
-스키마는 NEW_PIPELINE_GUIDE.md 3장과 동일하게 맞춰뒀으므로,
-나중에 YAML을 받아야 하면 _load()만 교체하고 나머지 코드는 그대로 둔다.
+이 파일은 "처음 값이 뭔지"와 "derived 값을 어떻게 계산하는지"만 안다.
+실행 중 바뀌는 실제 설정값(gRPC SetConfig로 갱신되는 것 포함)은 state.py가 갖고 있다 —
+여러 스레드가 건드리는 상태라 CLAUDE.md 규칙대로 한 곳에 모았다.
 """
 
 import math
@@ -10,9 +10,9 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
-# --- 사용자가 건드리는 값 -------------------------------------------------
+# --- 시작 시 기본값 (state.py가 이 값을 복사해서 실제 상태로 씀) ----------
 
-CONFIG = {
+DEFAULT_CONFIG = {
     "input": {
         "sources": [
             {
@@ -66,7 +66,7 @@ CONFIG = {
 # --- 계산으로 채우는 값 (직접 쓰지 않는다) --------------------------------
 
 
-def _compute_derived(cfg: dict) -> dict:
+def compute_derived(cfg: dict) -> dict:
     inp = cfg["input"]
     resize = inp["resize"]
 
@@ -90,19 +90,7 @@ def _compute_derived(cfg: dict) -> dict:
     return cfg
 
 
-CONFIG = _compute_derived(CONFIG)
-
-
 # --- 접근 헬퍼 ------------------------------------------------------------
-
-
-def get_config() -> dict:
-    """파이프라인 전체가 공유하는 단일 설정 dict."""
-    return CONFIG
-
-
-def source_uris() -> list[str]:
-    return [src["url"] for src in CONFIG["input"]["sources"]]
 
 
 def resolve(rel_path: str) -> str:

@@ -2,11 +2,13 @@ syntax = "proto3";
 
 package deepstream;
 
-// 1차 범위: input(소스/해상도/프레임레이트) 설정만 gRPC로 받는다.
-// pipeline.inference(모델 경로 등)는 런타임에 자주 안 바뀌어서 우선 config.py에 남겨둔다.
+// control-api는 별도 컨테이너에서 뜨는 설정 저장소 서버다. deepstream 파이프라인은 클라이언트로서
+// 시작 시 GetConfig로 초기 설정을 받고, WatchConfig로 이후 변경을 구독한다 (server-streaming RPC —
+// 클라이언트가 한 번 요청하면 서버가 여러 응답을 계속 흘려보낸다).
 service ControlApi {
   rpc SetConfig(SetConfigRequest) returns (SetConfigResponse);
-  rpc GetStatus(GetStatusRequest) returns (GetStatusResponse);
+  rpc GetConfig(GetConfigRequest) returns (GetConfigResponse);
+  rpc WatchConfig(WatchConfigRequest) returns (stream GetConfigResponse);
 }
 
 message Source {
@@ -33,9 +35,10 @@ message SetConfigResponse {
   string message = 2;
 }
 
-message GetStatusRequest {}
+message GetConfigRequest {}
 
-message GetStatusResponse {
-  bool running = 1;
-  int32 num_sources = 2;
+message GetConfigResponse {
+  InputConfig input = 1;
 }
+
+message WatchConfigRequest {}

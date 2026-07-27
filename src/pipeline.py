@@ -163,11 +163,10 @@ def build_fakesink(pipeline: Gst.Pipeline) -> Gst.Element:
 
 
 def build_pipeline(cfg: dict, encode: bool = True) -> tuple[Gst.Pipeline, Gst.Element, Gst.Element]:
-    """source_bin*N -> streammux -> pgie(human) -> tiler -> osd
+    """source_bin*N -> streammux -> pgie(human) -> tracker -> tiler -> osd
     -> (nvvideoconvert -> jpegenc -> appsink | fakesink).
 
-    TODO: tracker는 configs/tracker.yml 준비되면 pgie와 tiler 사이에 끼워 넣는다
-    (_build_tracker는 구현돼 있으니 build_pipeline만 고치면 됨). SGIE(얼굴)는 안 하기로 함.
+    SGIE(얼굴)는 안 하기로 함.
 
     소스가 1개든 N개든 같은 경로를 탄다 — N=1이면 tiler가 1x1이 될 뿐이다.
     encode=False면 인코딩 없이 fakesink로 받아 소스 연결/FPS만 확인한다.
@@ -192,6 +191,9 @@ def build_pipeline(cfg: dict, encode: bool = True) -> tuple[Gst.Pipeline, Gst.El
     pgie = _build_pgie(cfg["pipeline"]["inference"]["human"], inp["num_sources"])
     pipeline.add(pgie)
 
+    tracker = _build_tracker(cfg["pipeline"]["tracker"])
+    pipeline.add(tracker)
+
     tiler = _build_tiler(cfg["pipeline"]["tiler"])
     pipeline.add(tiler)
 
@@ -207,7 +209,8 @@ def build_pipeline(cfg: dict, encode: bool = True) -> tuple[Gst.Pipeline, Gst.El
         tail_head = sink
 
     _link(streammux, pgie)
-    _link(pgie, tiler)
+    _link(pgie, tracker)
+    _link(tracker, tiler)
     _link(tiler, osd)
     _link(osd, tail_head)
 

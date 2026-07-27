@@ -1,0 +1,17 @@
+%YAML:1.0
+BaseConfig:
+  minDetectorConfidence: 0
+  minTrackerConfidence: 0
+  minMatchingScore4Overall: 0.0
+  minTrailingScore4Overall: 0.0
+  minHits4Confirmation: 1
+  maxShadowTrailingAge: 30
+  probationAge: 3
+  earlyTerminationAge: 1
+
+TargetManagement:
+  enableBboxUnClipping: 0
+  maxTargetsPerStream: 150
+
+IOU:
+  matchingScoreWeight4Overall: 1.0

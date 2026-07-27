@@ -1,0 +1,41 @@
+syntax = "proto3";
+
+package deepstream;
+
+// 1차 범위: input(소스/해상도/프레임레이트) 설정만 gRPC로 받는다.
+// pipeline.inference(모델 경로 등)는 런타임에 자주 안 바뀌어서 우선 config.py에 남겨둔다.
+service ControlApi {
+  rpc SetConfig(SetConfigRequest) returns (SetConfigResponse);
+  rpc GetStatus(GetStatusRequest) returns (GetStatusResponse);
+}
+
+message Source {
+  string name = 1;
+  string url = 2;
+  int32 source_width = 3;
+  int32 source_height = 4;
+}
+
+message InputConfig {
+  repeated Source sources = 1;
+  int32 resize_width = 2;
+  int32 resize_height = 3;
+  int32 framerate_target = 4;
+  int32 reconnect_sec = 5;
+}
+
+message SetConfigRequest {
+  InputConfig input = 1;
+}
+
+message SetConfigResponse {
+  bool ok = 1;
+  string message = 2;
+}
+
+message GetStatusRequest {}
+
+message GetStatusResponse {
+  bool running = 1;
+  int32 num_sources = 2;
+}

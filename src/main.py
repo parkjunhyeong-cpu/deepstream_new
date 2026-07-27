@@ -1,27 +1,27 @@
 """
-2~3단계: 소스 연결 / 인코딩 / 기본 파이프라인 확인용 임시 테스트 엔트리포인트.
+3단계: 고정 config 기반 파이프라인 실행.
+소스/해상도/fps는 config.py의 CONFIG에서만 온다 — 실행 인자로 받지 않는다.
 element 조립은 sources.py / pipeline.py가 담당하고, 여기서는 실행(Gst.init, GLib 루프, bus)만 한다.
 
 실행 (DeepStream 컨테이너 안에서):
-    python3 src/main.py source rtsp://localhost:8554/stream0
-    python3 src/main.py encode rtsp://localhost:8554/stream0 --out /tmp/preview.jpg
-    python3 src/main.py pipeline rtsp://localhost:8554/stream0 --out /tmp/preview.jpg
+    python3 src/main.py                     # http://<host>:8810 에서 영상 확인
+    python3 src/main.py --fakesink          # 인코딩/웹 없이 소스 연결과 FPS만 확인
 """
 
 import argparse
 import signal
 import sys
-import time
 
 import gi
 
 gi.require_version("Gst", "1.0")
 from gi.repository import GLib, Gst
 
+from config import PROJECT_ROOT, get_config
 from logger import get_logger
-from pipeline import build_encode_tail, build_pipeline
+from pipeline import build_pipeline
 from probes import add_fps_probe
-from sources import create_source_bin, on_pad_added
+from webview import WebView
 
 logger = get_logger("main")
 
@@ -41,43 +41,18 @@ def bus_call(_bus, message, loop) -> bool:
     return True
 
 
-def build_source_pipeline(uri: str) -> Gst.Pipeline:
-    pipeline = Gst.Pipeline.new("source-check")
-    source_bin = create_source_bin(0, uri)
-    fakesink = Gst.ElementFactory.make("fakesink", "sink")
-    fakesink.set_property("sync", False)
+class FramePublisher:
+    """appsink가 뽑은 JPEG를 뷰어 서버의 FrameBuffer로 넘긴다."""
 
-    pipeline.add(source_bin)
-    pipeline.add(fakesink)
-
-    sink_pad = fakesink.get_static_pad("sink")
-    add_fps_probe(sink_pad, label="source0")
-    source_bin.connect("pad-added", on_pad_added, sink_pad, 0)
-
-    logger.info("연결 시도: %s", uri)
-    return pipeline
-
-
-class PreviewSink:
-    """appsink 새 프레임을 min_interval_sec에 한 번 out_path에 저장."""
-
-    def __init__(self, out_path: str, min_interval_sec: float = 1.0):
-        self.out_path = out_path
-        self.min_interval_sec = min_interval_sec
-        self.last_write = 0.0
+    def __init__(self, frames):
+        self.frames = frames
 
     def __call__(self, sink):
         sample = sink.emit("pull-sample")
         if sample is None:
             return Gst.FlowReturn.ERROR
         buf = sample.get_buffer()
-        data = buf.extract_dup(0, buf.get_size())
-        now = time.monotonic()
-        if now - self.last_write >= self.min_interval_sec:
-            with open(self.out_path, "wb") as f:
-                f.write(data)
-            self.last_write = now
-            logger.info("preview 저장: %s (%d bytes)", self.out_path, len(data))
+        self.frames.put(buf.extract_dup(0, buf.get_size()))
         return Gst.FlowReturn.OK
 
 
@@ -90,59 +65,23 @@ class SigintHandler:
         self.loop.quit()
 
 
-def _attach_preview_sink(appsink: Gst.Element, out_path: str, label: str) -> None:
-    add_fps_probe(appsink.get_static_pad("sink"), label=label)
-    appsink.connect("new-sample", PreviewSink(out_path))
-
-
-def build_encode_pipeline(uri: str, out_path: str) -> Gst.Pipeline:
-    """단일 소스 -> nvvideoconvert -> jpegenc -> appsink (streammux 없음)."""
-    pipeline = Gst.Pipeline.new("encode-check")
-    source_bin = create_source_bin(0, uri)
-    pipeline.add(source_bin)
-
-    conv, appsink = build_encode_tail(pipeline)
-    source_bin.connect("pad-added", on_pad_added, conv.get_static_pad("sink"), 0)
-
-    _attach_preview_sink(appsink, out_path, label="encoded")
-
-    logger.info("인코딩 테스트 시작: %s -> %s", uri, out_path)
-    return pipeline
-
-
-def build_multi_pipeline(uris: list[str], out_path: str) -> Gst.Pipeline:
-    """source_bin*N -> streammux -> tiler -> nvvideoconvert -> jpegenc -> appsink."""
-    pipeline, appsink = build_pipeline(uris)
-    _attach_preview_sink(appsink, out_path, label="tiled")
-
-    logger.info("기본 파이프라인 테스트 시작: %s -> %s", uris, out_path)
-    return pipeline
-
-
 def main() -> int:
-    parser = argparse.ArgumentParser(description="소스 연결 / 인코딩 확인 (임시 테스트 도구)")
-    sub = parser.add_subparsers(dest="mode", required=True)
-
-    p_source = sub.add_parser("source", help="소스 연결 + fps 확인")
-    p_source.add_argument("uri", help="RTSP/HTTP 소스 URI (예: rtsp://localhost:8554/stream0)")
-
-    p_encode = sub.add_parser("encode", help="소스 -> nvjpegenc 인코딩 확인")
-    p_encode.add_argument("uri", help="RTSP/HTTP 소스 URI")
-    p_encode.add_argument("--out", default="/tmp/preview.jpg", help="저장할 미리보기 jpg 경로")
-
-    p_pipeline = sub.add_parser("pipeline", help="streammux+tiler 포함 기본 파이프라인 확인")
-    p_pipeline.add_argument("uris", nargs="+", help="RTSP/HTTP 소스 URI (여러 개 가능)")
-    p_pipeline.add_argument("--out", default="/tmp/preview.jpg", help="저장할 미리보기 jpg 경로")
-
+    parser = argparse.ArgumentParser(description="고정 config 기반 파이프라인 실행")
+    parser.add_argument(
+        "--fakesink", action="store_true", help="인코딩/웹 없이 소스 연결과 FPS만 확인"
+    )
     args = parser.parse_args()
 
+    cfg = get_config()
+
     Gst.init(None)
-    if args.mode == "source":
-        pipeline = build_source_pipeline(args.uri)
-    elif args.mode == "encode":
-        pipeline = build_encode_pipeline(args.uri, args.out)
-    else:
-        pipeline = build_multi_pipeline(args.uris, args.out)
+    pipeline, sink = build_pipeline(cfg, encode=not args.fakesink)
+
+    webview = None
+    add_fps_probe(sink.get_static_pad("sink"), label="tiled")
+    if not args.fakesink:
+        webview = WebView(cfg["output"]["web"], PROJECT_ROOT / "public" / "index.html")
+        sink.connect("new-sample", FramePublisher(webview.frames))
 
     loop = GLib.MainLoop()
     bus = pipeline.get_bus()
@@ -151,11 +90,15 @@ def main() -> int:
 
     signal.signal(signal.SIGINT, SigintHandler(loop))
 
+    if webview is not None:
+        webview.start()
     pipeline.set_state(Gst.State.PLAYING)
     try:
         loop.run()
     finally:
         pipeline.set_state(Gst.State.NULL)
+        if webview is not None:
+            webview.stop()
 
     return 0
 

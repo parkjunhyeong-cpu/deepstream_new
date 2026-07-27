@@ -3,8 +3,6 @@
 Gst.init / GLib 루프 / bus 처리 등 실행 관련 로직은 main.py가 담당한다.
 """
 
-import math
-
 import gi
 
 gi.require_version("Gst", "1.0")
@@ -25,24 +23,37 @@ def _build_streammux(num_sources: int, width: int, height: int, batched_push_tim
     streammux.set_property("live-source", True)
     streammux.set_property("drop-pipeline-eos", True)  # 소스 1개 EOS로 전체 죽는 것 방지
     streammux.set_property("cache-buffer-timeout", batched_push_timeout * 2)
+
+    logger.info(
+        "streammux: %dx%d, batch-size=%d, batched-push-timeout=%dus",
+        width, height, num_sources, batched_push_timeout,
+    )
     return streammux
 
 
-def _build_tiler(num_sources: int, tile_width: int, tile_height: int) -> Gst.Element:
-    cols = math.ceil(math.sqrt(num_sources))
-    rows = math.ceil(num_sources / cols)
-
+def _build_tiler(tiler_cfg: dict) -> Gst.Element:
+    """격자 계산은 config._compute_derived()가 이미 끝냈으므로 그대로 꽂기만 한다."""
     tiler = Gst.ElementFactory.make("nvmultistreamtiler", "tiler")
-    tiler.set_property("rows", rows)
-    tiler.set_property("columns", cols)
-    tiler.set_property("width", tile_width * cols)
-    tiler.set_property("height", tile_height * rows)
+    tiler.set_property("rows", tiler_cfg["rows"])
+    tiler.set_property("columns", tiler_cfg["columns"])
+    tiler.set_property("width", tiler_cfg["width"])
+    tiler.set_property("height", tiler_cfg["height"])
+
+    logger.info(
+        "tiler: %dx%d 격자, 출력 %dx%d",
+        tiler_cfg["rows"], tiler_cfg["columns"], tiler_cfg["width"], tiler_cfg["height"],
+    )
     return tiler
 
 
-def build_encode_tail(pipeline: Gst.Pipeline) -> tuple[Gst.Element, Gst.Element]:
-    """nvvideoconvert -> capsfilter -> jpegenc -> appsink 를 만들어 pipeline에 추가하고
-    (체인 시작 element, appsink)를 반환한다. 호출자가 앞단을 conv에 링크하면 된다."""
+def _link(src: Gst.Element, dst: Gst.Element) -> None:
+    if not src.link(dst):
+        raise RuntimeError(f"{src.get_name()} -> {dst.get_name()} 링크 실패")
+
+
+def build_encode(pipeline: Gst.Pipeline, jpeg_quality: int = 75) -> tuple[Gst.Element, Gst.Element]:
+    """nvvideoconvert -> capsfilter -> jpegenc 를 만들어 pipeline에 추가하고
+    (체인 첫 element, 마지막 element)를 반환한다. sink 연결은 호출자 몫이다."""
     conv = Gst.ElementFactory.make("nvvideoconvert", "conv")
 
     jpegenc = Gst.ElementFactory.make("nvjpegenc", "jpegenc")
@@ -56,53 +67,76 @@ def build_encode_tail(pipeline: Gst.Pipeline) -> tuple[Gst.Element, Gst.Element]
     capsfilter = Gst.ElementFactory.make("capsfilter", "jpeg-caps")
     capsfilter.set_property("caps", caps)
 
+    # nvjpegenc / jpegenc 둘 다 quality를 갖지만 버전에 따라 없을 수 있다.
+    if jpegenc.find_property("quality") is not None:
+        jpegenc.set_property("quality", jpeg_quality)
+    else:
+        logger.warning("%s에 quality 속성이 없어 기본값 사용", jpegenc.get_factory().get_name())
+
+    for el in (conv, capsfilter, jpegenc):
+        pipeline.add(el)
+    _link(conv, capsfilter)
+    _link(capsfilter, jpegenc)
+
+    logger.info("encode: %s, quality=%d", jpegenc.get_factory().get_name(), jpeg_quality)
+    return conv, jpegenc
+
+
+def build_appsink(pipeline: Gst.Pipeline) -> Gst.Element:
+    """최신 프레임만 유지하는 appsink. 소비자가 느려도 파이프라인이 밀리지 않는다."""
     appsink = Gst.ElementFactory.make("appsink", "sink")
     appsink.set_property("emit-signals", True)
     appsink.set_property("max-buffers", 1)
     appsink.set_property("drop", True)
     appsink.set_property("sync", False)
 
-    for el in (conv, capsfilter, jpegenc, appsink):
-        pipeline.add(el)
-
-    if not conv.link(capsfilter):
-        raise RuntimeError("conv -> capsfilter 링크 실패")
-    if not capsfilter.link(jpegenc):
-        raise RuntimeError("capsfilter -> jpegenc 링크 실패")
-    if not jpegenc.link(appsink):
-        raise RuntimeError("jpegenc -> appsink 링크 실패")
-
-    return conv, appsink
+    pipeline.add(appsink)
+    return appsink
 
 
-def build_pipeline(
-    uris: list[str],
-    resize_width: int = 960,
-    resize_height: int = 540,
-    target_fps: int = 10,
-) -> tuple[Gst.Pipeline, Gst.Element]:
-    """source_bin*N -> streammux -> tiler -> nvvideoconvert -> jpegenc -> appsink.
-    추론/트래커/OSD 없는 최소 체인. (pipeline, appsink) 반환."""
+def build_fakesink(pipeline: Gst.Pipeline) -> Gst.Element:
+    """인코딩 없이 버리는 싱크. 소스 연결/FPS 확인용."""
+    fakesink = Gst.ElementFactory.make("fakesink", "sink")
+    fakesink.set_property("sync", False)
+
+    pipeline.add(fakesink)
+    return fakesink
+
+
+def build_pipeline(cfg: dict, encode: bool = True) -> tuple[Gst.Pipeline, Gst.Element]:
+    """source_bin*N -> streammux -> tiler -> (nvvideoconvert -> jpegenc -> appsink | fakesink).
+
+    소스가 1개든 N개든 같은 경로를 탄다 — N=1이면 tiler가 1x1이 될 뿐이다.
+    encode=False면 인코딩 없이 fakesink로 받아 소스 연결/FPS만 확인한다.
+    (pipeline, 마지막 sink element) 반환.
+    """
+    inp = cfg["input"]
+    resize = inp["resize"]
     pipeline = Gst.Pipeline.new("basic-pipeline")
 
-    batched_push_timeout = 1_000_000 // target_fps
-    streammux = _build_streammux(len(uris), resize_width, resize_height, batched_push_timeout)
+    streammux = _build_streammux(
+        inp["num_sources"], resize["width"], resize["height"], inp["batched_push_timeout"]
+    )
     pipeline.add(streammux)
 
-    for i, uri in enumerate(uris):
-        source_bin = create_source_bin(i, uri)
+    for i, src in enumerate(inp["sources"]):
+        source_bin = create_source_bin(i, src["url"], inp["reconnect_sec"], src["name"])
         pipeline.add(source_bin)
         sink_pad = streammux.request_pad_simple(f"sink_{i}")  # pad-added 오기 전에 미리 요청
         source_bin.connect("pad-added", on_pad_added, sink_pad, i)
 
-    tiler = _build_tiler(len(uris), resize_width, resize_height)
+    tiler = _build_tiler(cfg["pipeline"]["tiler"])
     pipeline.add(tiler)
 
-    conv, appsink = build_encode_tail(pipeline)
+    if encode:
+        tail_head, encode_tail = build_encode(pipeline, cfg["output"]["web"]["jpeg_quality"])
+        sink = build_appsink(pipeline)
+        _link(encode_tail, sink)
+    else:
+        sink = build_fakesink(pipeline)
+        tail_head = sink
 
-    if not streammux.link(tiler):
-        raise RuntimeError("streammux -> tiler 링크 실패")
-    if not tiler.link(conv):
-        raise RuntimeError("tiler -> conv 링크 실패")
+    _link(streammux, tiler)
+    _link(tiler, tail_head)
 
-    return pipeline, appsink
+    return pipeline, sink

@@ -8,17 +8,19 @@ from logger import get_logger
 logger = get_logger(__name__)
 
 
-def create_source_bin(index: int, uri: str, reconnect_sec: int = 10) -> Gst.Element:
-    name = f"source-bin-{index:02d}"
-    source_bin = Gst.ElementFactory.make("nvurisrcbin", name)
+def create_source_bin(index: int, uri: str, reconnect_sec: int = 10, label: str = "") -> Gst.Element:
+    bin_name = f"source-bin-{index:02d}"
+    source_bin = Gst.ElementFactory.make("nvurisrcbin", bin_name)
     if source_bin is None:
-        raise RuntimeError(f"nvurisrcbin 생성 실패 ({name}) — DeepStream 컨테이너 안에서 실행 중인지 확인")
+        raise RuntimeError(f"nvurisrcbin 생성 실패 ({bin_name}) — DeepStream 컨테이너 안에서 실행 중인지 확인")
 
     source_bin.set_property("uri", uri)
     source_bin.set_property("select-rtp-protocol", 4)  # TCP
     source_bin.set_property("latency", 200)
     source_bin.set_property("rtsp-reconnect-interval", reconnect_sec)
     source_bin.set_property("rtsp-reconnect-attempts", 1)
+
+    logger.info("source %d (%s): %s (reconnect %ds)", index, label or bin_name, uri, reconnect_sec)
     return source_bin
 
 

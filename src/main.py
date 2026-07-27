@@ -20,7 +20,7 @@ from gi.repository import GLib, Gst
 from config import PROJECT_ROOT, get_config
 from logger import get_logger
 from pipeline import build_pipeline
-from probes import add_fps_probe
+from probes import add_detection_probe, add_fps_probe
 from webview import WebView
 
 logger = get_logger("main")
@@ -79,6 +79,10 @@ def main() -> int:
 
     webview = None
     add_fps_probe(sink.get_static_pad("sink"), label="tiled")
+
+    pgie = pipeline.get_by_name("pgie")
+    add_detection_probe(pgie.get_static_pad("src"), label="pgie-human")
+
     if not args.fakesink:
         webview = WebView(cfg["output"]["web"], PROJECT_ROOT / "public" / "index.html")
         sink.connect("new-sample", FramePublisher(webview.frames))

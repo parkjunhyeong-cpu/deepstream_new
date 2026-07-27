@@ -33,6 +33,25 @@ CONFIG = {
     },
     "pipeline": {
         "network_mode": 2,  # 0=FP32, 1=INT8, 2=FP16
+        "inference": {
+            "human": {
+                "enabled": True,
+                "config": "configs/pgie_human.txt",  # PROJECT_ROOT 기준, resolve()로 절대경로화
+                "infer_dim": 640,
+                "labels": ["person"],
+            },
+            "face": {
+                "enabled": True,
+                "config": "configs/sgie_face.txt",  # process-mode=2, operate-on-gie-id=1(human)
+                "infer_dim": 256,
+                "labels": ["face"],
+            },
+        },
+        "tracker": {
+            "config": "configs/tracker.yml",  # 알고리즘 설정만 우리가 제공, .so는 DeepStream 번들 사용
+            "width": 640,
+            "height": 384,
+        },
         "osd": {
             "display_bbox": True,
             "display_text": True,

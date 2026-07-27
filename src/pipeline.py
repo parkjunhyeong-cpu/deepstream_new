@@ -8,10 +8,14 @@ import gi
 gi.require_version("Gst", "1.0")
 from gi.repository import Gst
 
+from config import resolve
 from logger import get_logger
 from sources import create_source_bin, on_pad_added
 
 logger = get_logger(__name__)
+
+# DeepStream 컨테이너에 이미 번들로 들어있는 트래커 라이브러리 — 프로젝트가 제공하는 게 아니다.
+TRACKER_LIB_PATH = "/opt/nvidia/deepstream/deepstream/lib/libnvds_nvmultiobjecttracker.so"
 
 
 def _build_streammux(num_sources: int, width: int, height: int, batched_push_timeout: int) -> Gst.Element:
@@ -44,6 +48,68 @@ def _build_tiler(tiler_cfg: dict) -> Gst.Element:
         tiler_cfg["rows"], tiler_cfg["columns"], tiler_cfg["width"], tiler_cfg["height"],
     )
     return tiler
+
+
+def _build_pgie(model_cfg: dict, num_sources: int) -> Gst.Element:
+    """1차 추론(PGIE). config-file-path를 세팅하는 순간 nvinfer가 그 txt를 즉시 파싱해서
+    process-mode/네트워크 shape 등 내부 속성을 채운다. gie-unique-id는 절대 하드코딩하지 않고
+    세팅 후 get_property로 다시 읽어서 검증한다 (가이드 4.4, 커밋 e2737dd가 고친 버그)."""
+    pgie = Gst.ElementFactory.make("nvinfer", "pgie")
+    pgie.set_property("config-file-path", resolve(model_cfg["config"]))
+    pgie.set_property("batch-size", num_sources)  # nvdspreprocess 없이 바로 붙이므로 streammux와 맞춘다
+
+    process_mode = pgie.get_property("process-mode")
+    unique_id = pgie.get_property("unique-id")
+    if process_mode != 1:
+        logger.warning(
+            "%s의 process-mode=%d — PGIE(1)가 아닙니다. config 파일을 확인하세요",
+            model_cfg["config"], process_mode,
+        )
+
+    logger.info("pgie: %s (unique-id=%d)", model_cfg["config"], unique_id)
+    return pgie
+
+
+def _build_tracker(tracker_cfg: dict) -> Gst.Element:
+    """PGIE가 찾은 박스들에 프레임을 넘나드는 고유 object-id를 붙인다. 좌표는 안 바꾸고
+    identity만 유지시켜서, 뒤의 SGIE/분석이 '같은 사람'을 프레임마다 이어서 볼 수 있게 한다.
+    ll-lib-file은 DeepStream 번들 라이브러리, ll-config-file만 프로젝트가 제공한다."""
+    tracker = Gst.ElementFactory.make("nvtracker", "tracker")
+    tracker.set_property("tracker-width", tracker_cfg["width"])
+    tracker.set_property("tracker-height", tracker_cfg["height"])
+    tracker.set_property("gpu-id", 0)
+    tracker.set_property("ll-lib-file", TRACKER_LIB_PATH)
+    tracker.set_property("ll-config-file", resolve(tracker_cfg["config"]))
+
+    logger.info("tracker: %s (%dx%d)", tracker_cfg["config"], tracker_cfg["width"], tracker_cfg["height"])
+    return tracker
+
+
+def _build_sgie(model_cfg: dict) -> Gst.Element:
+    """2차 추론(SGIE). PGIE(+tracker)가 찾은 객체를 잘라서 그 위에 다시 추론한다.
+    어느 GIE의 객체를 대상으로 할지(operate-on-gie-id)와 process-mode는 config txt 안에
+    이미 들어있으므로 여기서는 건드리지 않고, 세팅 후 값을 읽어서 검증만 한다."""
+    sgie = Gst.ElementFactory.make("nvinfer", "sgie")
+    sgie.set_property("config-file-path", resolve(model_cfg["config"]))
+
+    process_mode = sgie.get_property("process-mode")
+    unique_id = sgie.get_property("unique-id")
+    if process_mode != 2:
+        logger.warning(
+            "%s의 process-mode=%d — SGIE(2)가 아닙니다. config 파일을 확인하세요",
+            model_cfg["config"], process_mode,
+        )
+
+    logger.info("sgie: %s (unique-id=%d)", model_cfg["config"], unique_id)
+    return sgie
+
+
+def _build_osd() -> Gst.Element:
+    """추론 메타데이터(bbox/label)를 실제 프레임 픽셀에 그려 넣는다.
+    nvinfer는 메타데이터만 채울 뿐 화면은 안 바꾼다 — nvdsosd가 그걸 읽어서 렌더링해야 보인다.
+    tiler가 이미 좌표를 합성 캔버스 기준으로 바꿔주므로 osd는 tiler 뒤에 붙인다
+    (레퍼런스 앱 deepstream-app과 동일한 순서, 가이드 4.1)."""
+    return Gst.ElementFactory.make("nvdsosd", "osd")
 
 
 def _link(src: Gst.Element, dst: Gst.Element) -> None:
@@ -104,7 +170,11 @@ def build_fakesink(pipeline: Gst.Pipeline) -> Gst.Element:
 
 
 def build_pipeline(cfg: dict, encode: bool = True) -> tuple[Gst.Pipeline, Gst.Element]:
-    """source_bin*N -> streammux -> tiler -> (nvvideoconvert -> jpegenc -> appsink | fakesink).
+    """source_bin*N -> streammux -> pgie(human) -> tiler -> osd
+    -> (nvvideoconvert -> jpegenc -> appsink | fakesink).
+
+    TODO: tracker + sgie(face)는 configs/tracker.yml / 얼굴 모델 준비되면 pgie와 tiler 사이에
+    다시 끼워 넣는다 (_build_tracker/_build_sgie는 구현돼 있으니 build_pipeline만 고치면 됨).
 
     소스가 1개든 N개든 같은 경로를 탄다 — N=1이면 tiler가 1x1이 될 뿐이다.
     encode=False면 인코딩 없이 fakesink로 받아 소스 연결/FPS만 확인한다.
@@ -125,8 +195,14 @@ def build_pipeline(cfg: dict, encode: bool = True) -> tuple[Gst.Pipeline, Gst.El
         sink_pad = streammux.request_pad_simple(f"sink_{i}")  # pad-added 오기 전에 미리 요청
         source_bin.connect("pad-added", on_pad_added, sink_pad, i)
 
+    pgie = _build_pgie(cfg["pipeline"]["inference"]["human"], inp["num_sources"])
+    pipeline.add(pgie)
+
     tiler = _build_tiler(cfg["pipeline"]["tiler"])
     pipeline.add(tiler)
+
+    osd = _build_osd()
+    pipeline.add(osd)
 
     if encode:
         tail_head, encode_tail = build_encode(pipeline, cfg["output"]["web"]["jpeg_quality"])
@@ -136,7 +212,9 @@ def build_pipeline(cfg: dict, encode: bool = True) -> tuple[Gst.Pipeline, Gst.El
         sink = build_fakesink(pipeline)
         tail_head = sink
 
-    _link(streammux, tiler)
-    _link(tiler, tail_head)
+    _link(streammux, pgie)
+    _link(pgie, tiler)
+    _link(tiler, osd)
+    _link(osd, tail_head)
 
     return pipeline, sink

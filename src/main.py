@@ -75,12 +75,10 @@ def main() -> int:
     cfg = get_config()
 
     Gst.init(None)
-    pipeline, sink = build_pipeline(cfg, encode=not args.fakesink)
+    pipeline, pgie, sink = build_pipeline(cfg, encode=not args.fakesink)
 
     webview = None
     add_fps_probe(sink.get_static_pad("sink"), label="tiled")
-
-    pgie = pipeline.get_by_name("pgie")
     add_detection_probe(pgie.get_static_pad("src"), label="pgie-human")
 
     if not args.fakesink:

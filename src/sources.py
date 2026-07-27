@@ -18,7 +18,7 @@ def create_source_bin(index: int, uri: str, reconnect_sec: int = 10, label: str 
     source_bin.set_property("select-rtp-protocol", 4)  # TCP
     source_bin.set_property("latency", 200)
     source_bin.set_property("rtsp-reconnect-interval", reconnect_sec)
-    source_bin.set_property("rtsp-reconnect-attempts", 1)
+    source_bin.set_property("rtsp-reconnect-attempts", -1)
 
     logger.info("source %d (%s): %s (reconnect %ds)", index, label or bin_name, uri, reconnect_sec)
     return source_bin

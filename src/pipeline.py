@@ -18,8 +18,19 @@ logger = get_logger(__name__)
 TRACKER_LIB_PATH = "/opt/nvidia/deepstream/deepstream/lib/libnvds_nvmultiobjecttracker.so"
 
 
+def _make(factory_name: str, elem_name: str) -> Gst.Element:
+    """생성 실패를 여기서 바로 잡아서 원인을 알 수 있는 에러로 죽인다.
+    체크 없이 넘기면 몇 줄 뒤 set_property에서 훨씬 헷갈리는 AttributeError로 죽는다."""
+    element = Gst.ElementFactory.make(factory_name, elem_name)
+    if element is None:
+        raise RuntimeError(
+            f"{factory_name} 생성 실패 ({elem_name}) — 플러그인이 없거나 DeepStream 컨테이너 밖에서 실행 중인지 확인"
+        )
+    return element
+
+
 def _build_streammux(num_sources: int, width: int, height: int, batched_push_timeout: int) -> Gst.Element:
-    streammux = Gst.ElementFactory.make("nvstreammux", "streammux")
+    streammux = _make("nvstreammux", "streammux")
     streammux.set_property("width", width)
     streammux.set_property("height", height)
     streammux.set_property("batch-size", num_sources)
@@ -37,7 +48,7 @@ def _build_streammux(num_sources: int, width: int, height: int, batched_push_tim
 
 def _build_tiler(tiler_cfg: dict) -> Gst.Element:
     """격자 계산은 config._compute_derived()가 이미 끝냈으므로 그대로 꽂기만 한다."""
-    tiler = Gst.ElementFactory.make("nvmultistreamtiler", "tiler")
+    tiler = _make("nvmultistreamtiler", "tiler")
     tiler.set_property("rows", tiler_cfg["rows"])
     tiler.set_property("columns", tiler_cfg["columns"])
     tiler.set_property("width", tiler_cfg["width"])
@@ -54,7 +65,7 @@ def _build_pgie(model_cfg: dict, num_sources: int) -> Gst.Element:
     """1차 추론(PGIE). config-file-path를 세팅하는 순간 nvinfer가 그 txt를 즉시 파싱해서
     process-mode/네트워크 shape 등 내부 속성을 채운다. gie-unique-id는 절대 하드코딩하지 않고
     세팅 후 get_property로 다시 읽어서 검증한다 (가이드 4.4, 커밋 e2737dd가 고친 버그)."""
-    pgie = Gst.ElementFactory.make("nvinfer", "pgie")
+    pgie = _make("nvinfer", "pgie")
     pgie.set_property("config-file-path", resolve(model_cfg["config"]))
     pgie.set_property("batch-size", num_sources)  # nvdspreprocess 없이 바로 붙이므로 streammux와 맞춘다
 
@@ -74,7 +85,7 @@ def _build_tracker(tracker_cfg: dict) -> Gst.Element:
     """PGIE가 찾은 박스들에 프레임을 넘나드는 고유 object-id를 붙인다. 좌표는 안 바꾸고
     identity만 유지시켜서 '같은 사람'을 프레임마다 이어서 볼 수 있게 한다 (예: 중복 카운트 방지).
     ll-lib-file은 DeepStream 번들 라이브러리, ll-config-file만 프로젝트가 제공한다."""
-    tracker = Gst.ElementFactory.make("nvtracker", "tracker")
+    tracker = _make("nvtracker", "tracker")
     tracker.set_property("tracker-width", tracker_cfg["width"])
     tracker.set_property("tracker-height", tracker_cfg["height"])
     tracker.set_property("gpu-id", 0)
@@ -90,7 +101,7 @@ def _build_osd() -> Gst.Element:
     nvinfer는 메타데이터만 채울 뿐 화면은 안 바꾼다 — nvdsosd가 그걸 읽어서 렌더링해야 보인다.
     tiler가 이미 좌표를 합성 캔버스 기준으로 바꿔주므로 osd는 tiler 뒤에 붙인다
     (레퍼런스 앱 deepstream-app과 동일한 순서, 가이드 4.1)."""
-    return Gst.ElementFactory.make("nvdsosd", "osd")
+    return _make("nvdsosd", "osd")
 
 
 def _link(src: Gst.Element, dst: Gst.Element) -> None:
@@ -101,17 +112,18 @@ def _link(src: Gst.Element, dst: Gst.Element) -> None:
 def build_encode(pipeline: Gst.Pipeline, jpeg_quality: int = 75) -> tuple[Gst.Element, Gst.Element]:
     """nvvideoconvert -> capsfilter -> jpegenc 를 만들어 pipeline에 추가하고
     (체인 첫 element, 마지막 element)를 반환한다. sink 연결은 호출자 몫이다."""
-    conv = Gst.ElementFactory.make("nvvideoconvert", "conv")
+    conv = _make("nvvideoconvert", "conv")
 
+    # nvjpegenc는 있으면 쓰고 없으면 폴백하는 "탐색"이라 _make(실패 시 raise)를 안 쓴다.
     jpegenc = Gst.ElementFactory.make("nvjpegenc", "jpegenc")
     if jpegenc is not None:
         caps = Gst.Caps.from_string("video/x-raw(memory:NVMM), format=I420")
     else:
         logger.warning("nvjpegenc 없음 — CPU jpegenc로 폴백")
-        jpegenc = Gst.ElementFactory.make("jpegenc", "jpegenc")
+        jpegenc = _make("jpegenc", "jpegenc")  # 이것도 없으면 진짜 에러
         caps = Gst.Caps.from_string("video/x-raw, format=I420")
 
-    capsfilter = Gst.ElementFactory.make("capsfilter", "jpeg-caps")
+    capsfilter = _make("capsfilter", "jpeg-caps")
     capsfilter.set_property("caps", caps)
 
     # nvjpegenc / jpegenc 둘 다 quality를 갖지만 버전에 따라 없을 수 있다.
@@ -131,7 +143,7 @@ def build_encode(pipeline: Gst.Pipeline, jpeg_quality: int = 75) -> tuple[Gst.El
 
 def build_appsink(pipeline: Gst.Pipeline) -> Gst.Element:
     """최신 프레임만 유지하는 appsink. 소비자가 느려도 파이프라인이 밀리지 않는다."""
-    appsink = Gst.ElementFactory.make("appsink", "sink")
+    appsink = _make("appsink", "sink")
     appsink.set_property("emit-signals", True)
     appsink.set_property("max-buffers", 1)
     appsink.set_property("drop", True)
@@ -143,14 +155,14 @@ def build_appsink(pipeline: Gst.Pipeline) -> Gst.Element:
 
 def build_fakesink(pipeline: Gst.Pipeline) -> Gst.Element:
     """인코딩 없이 버리는 싱크. 소스 연결/FPS 확인용."""
-    fakesink = Gst.ElementFactory.make("fakesink", "sink")
+    fakesink = _make("fakesink", "sink")
     fakesink.set_property("sync", False)
 
     pipeline.add(fakesink)
     return fakesink
 
 
-def build_pipeline(cfg: dict, encode: bool = True) -> tuple[Gst.Pipeline, Gst.Element]:
+def build_pipeline(cfg: dict, encode: bool = True) -> tuple[Gst.Pipeline, Gst.Element, Gst.Element]:
     """source_bin*N -> streammux -> pgie(human) -> tiler -> osd
     -> (nvvideoconvert -> jpegenc -> appsink | fakesink).
 
@@ -159,7 +171,8 @@ def build_pipeline(cfg: dict, encode: bool = True) -> tuple[Gst.Pipeline, Gst.El
 
     소스가 1개든 N개든 같은 경로를 탄다 — N=1이면 tiler가 1x1이 될 뿐이다.
     encode=False면 인코딩 없이 fakesink로 받아 소스 연결/FPS만 확인한다.
-    (pipeline, 마지막 sink element) 반환.
+    (pipeline, pgie, 마지막 sink element) 반환 — 이미 만든 element를 그대로 넘겨주는 것뿐이라
+    호출자가 이름으로 다시 찾을(get_by_name) 필요가 없다.
     """
     inp = cfg["input"]
     resize = inp["resize"]
@@ -198,4 +211,4 @@ def build_pipeline(cfg: dict, encode: bool = True) -> tuple[Gst.Pipeline, Gst.El
     _link(tiler, osd)
     _link(osd, tail_head)
 
-    return pipeline, sink
+    return pipeline, pgie, sink

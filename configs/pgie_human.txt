@@ -2,7 +2,7 @@
 gpu-id=0
 net-scale-factor=0.00392156862
 model-color-format=0
-onnx-file=../models/20260324_human.pt.onnx
+onnx-file=../models/20260706_DET_HUMAN_YOLO26s.onnx
 labelfile-path=labels_human.txt
 custom-lib-path=../plugins/yolo-custom/nvdsinfer_custom_impl_Yolo/libnvdsinfer_custom_impl_Yolo.so
 infer-dims=3;640;640

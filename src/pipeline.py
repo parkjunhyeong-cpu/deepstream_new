@@ -162,7 +162,9 @@ def build_fakesink(pipeline: Gst.Pipeline) -> Gst.Element:
     return fakesink
 
 
-def build_pipeline(cfg: dict, encode: bool = True) -> tuple[Gst.Pipeline, Gst.Element, Gst.Element]:
+def build_pipeline(
+    cfg: dict, encode: bool = True
+) -> tuple[Gst.Pipeline, Gst.Element, Gst.Element, Gst.Element]:
     """source_bin*N -> streammux -> pgie(human) -> tracker -> tiler -> osd
     -> (nvvideoconvert -> jpegenc -> appsink | fakesink).
 
@@ -170,8 +172,8 @@ def build_pipeline(cfg: dict, encode: bool = True) -> tuple[Gst.Pipeline, Gst.El
 
     소스가 1개든 N개든 같은 경로를 탄다 — N=1이면 tiler가 1x1이 될 뿐이다.
     encode=False면 인코딩 없이 fakesink로 받아 소스 연결/FPS만 확인한다.
-    (pipeline, pgie, 마지막 sink element) 반환 — 이미 만든 element를 그대로 넘겨주는 것뿐이라
-    호출자가 이름으로 다시 찾을(get_by_name) 필요가 없다.
+    (pipeline, pgie, tracker, 마지막 sink element) 반환 — 이미 만든 element를 그대로 넘겨주는
+    것뿐이라 호출자가 이름으로 다시 찾을(get_by_name) 필요가 없다.
     """
     inp = cfg["input"]
     resize = inp["resize"]
@@ -214,4 +216,4 @@ def build_pipeline(cfg: dict, encode: bool = True) -> tuple[Gst.Pipeline, Gst.El
     _link(tiler, osd)
     _link(osd, tail_head)
 
-    return pipeline, pgie, sink
+    return pipeline, pgie, tracker, sink

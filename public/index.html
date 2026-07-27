@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>DeepStream Viewer</title>
+<style>
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: #111;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: sans-serif;
+  }
+  #stream {
+    max-width: 100%;
+    max-height: 100vh;
+  }
+  #status {
+    position: fixed;
+    top: 8px;
+    left: 8px;
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-size: 12px;
+    color: #fff;
+    background: #d33;
+  }
+  #status.live {
+    background: #2a2;
+  }
+</style>
+</head>
+<body>
+  <div id="status">connecting...</div>
+  <img id="stream" src="/stream" alt="stream">
+
+  <script>
+    const img = document.getElementById("stream");
+    const status = document.getElementById("status");
+
+    img.addEventListener("load", () => {
+      status.textContent = "live";
+      status.classList.add("live");
+    });
+
+    img.addEventListener("error", () => {
+      status.textContent = "reconnecting...";
+      status.classList.remove("live");
+      setTimeout(() => {
+        img.src = "/stream?ts=" + Date.now();
+      }, 1000);
+    });
+  </script>
+</body>
+</html>

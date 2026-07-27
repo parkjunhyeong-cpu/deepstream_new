@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.venv/
+
+# 모델/엔진 파일은 용량이 커서 git에 올리지 않음 (원격 서버에서 빌드)
+models/*.onnx
+models/*.engine

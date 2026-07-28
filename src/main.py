@@ -7,10 +7,10 @@ GLib 루프를 끝내고 비정상 종료 코드로 죽어서, 외부(docker res
 다시 띄우면 그때 fetch_config()가 새 값을 받아온다. NVIDIA 플러그인이
 set_state(NULL) 전환 시 종종 segfault 나는 문제(가이드 알려진 함정)를 이렇게 피한다.
 
-실행 (DeepStream 컨테이너 안에서, control-api가 먼저 떠 있어야 함):
+실행 (DeepStream 컨테이너 안에서, control-api가 먼저 떠 있어야 함 — 설정의 유일한 출처라
+로컬 기본값으로 대신할 방법이 없다):
     python3 src/main.py                     # http://<host>:8810 에서 영상 확인
     python3 src/main.py --fakesink          # 인코딩/웹 없이 소스 연결과 FPS만 확인
-    python3 src/main.py --no-control-api    # 임시: control-api 없이 DEFAULT_CONFIG로 실행
 """
 
 import argparse
@@ -89,18 +89,10 @@ def main() -> int:
     parser.add_argument(
         "--fakesink", action="store_true", help="인코딩/웹 없이 소스 연결과 FPS만 확인"
     )
-    parser.add_argument(
-        "--no-control-api",
-        action="store_true",
-        help="임시: control-api 없이 config.py의 DEFAULT_CONFIG로 바로 실행 (WatchConfig 구독도 안 함)",
-    )
     args = parser.parse_args()
 
-    if args.no_control_api:
-        logger.warning("--no-control-api: control-api 안 붙고 DEFAULT_CONFIG로 실행")
-    else:
-        initial_config = control_api.fetch_config()
-        state.apply_config(initial_config)
+    initial_config = control_api.fetch_config()
+    state.apply_config(initial_config)
     cfg = state.get_config()
 
     Gst.init(None)
@@ -126,9 +118,8 @@ def main() -> int:
 
     signal.signal(signal.SIGINT, SigintHandler(loop))
 
-    if not args.no_control_api:
-        watcher = control_api.ConfigWatcher(ConfigChangeHandler(loop))
-        watcher.start()
+    watcher = control_api.ConfigWatcher(ConfigChangeHandler(loop))
+    watcher.start()
 
     if webview is not None:
         webview.start()

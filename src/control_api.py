@@ -10,6 +10,7 @@ pb/control_api_pb2*.py는 proto에서 생성되는 파일이라 저장소에 없
 로 생성해야 이 모듈이 import된다.
 """
 
+import json
 import os
 import threading
 
@@ -25,9 +26,9 @@ PORT = int(os.environ.get("CONTROL_API_PORT", "50051"))
 
 
 def _proto_to_config(proto_cfg: control_api_pb2.Config) -> dict:
-    """control-api는 input/pipeline/output 전체를 소유한다 — config.py의 DEFAULT_CONFIG와
-    같은 모양(shape)으로 그대로 변환한다. compute_derived()가 채우는 num_sources/tiler 등은
-    여기서 만들지 않는다 (state.py가 이 dict을 받은 뒤에 계산)."""
+    """control-api는 input/pipeline/output 전체를 소유한다 — 그 shape 그대로 dict으로 변환한다.
+    compute_derived()가 채우는 num_sources/tiler 등은 여기서 만들지 않는다
+    (state.py가 이 dict을 받은 뒤에 계산)."""
     inp = proto_cfg.input
     pipeline = proto_cfg.pipeline
     web = proto_cfg.output.web
@@ -85,15 +86,18 @@ def _proto_to_config(proto_cfg: control_api_pb2.Config) -> dict:
 
 
 def fetch_config() -> dict:
-    """시작 시 한 번 호출 — control-api에서 전체 설정(input/pipeline/output)을 받아온다."""
+    """시작 시 한 번 호출 — control-api에서 전체 설정(input/pipeline/output)을 받아온다.
+    최초 1회뿐이라 전체 내용을 로그로 남겨도 부담이 없다 — WatchConfig로 받는 이후 변경은
+    (매번 로그로 남기기엔 너무 잦을 수 있어) 여기서는 남기지 않는다."""
     with grpc.insecure_channel(f"{HOST}:{PORT}") as channel:
         stub = control_api_pb2_grpc.ControlApiStub(channel)
         response = stub.GetConfig(control_api_pb2.GetConfigRequest())
+        config = _proto_to_config(response.config)
         logger.info(
-            "control-api(%s:%d)에서 설정 수신: 소스 %d개",
-            HOST, PORT, len(response.config.input.sources),
+            "control-api(%s:%d)에서 설정 수신: 소스 %d개", HOST, PORT, len(config["input"]["sources"])
         )
-        return _proto_to_config(response.config)
+        logger.info("최초 설정 전체:\n%s", json.dumps(config, ensure_ascii=False, indent=2))
+        return config
 
 
 class ConfigWatcher:

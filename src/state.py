@@ -6,19 +6,22 @@
 import copy
 import threading
 
-from config import DEFAULT_CONFIG, compute_derived
+from config import compute_derived
 from logger import get_logger
 
 logger = get_logger(__name__)
 
 _lock = threading.Lock()
-_config = compute_derived(copy.deepcopy(DEFAULT_CONFIG))
+_config: dict | None = None
 _restart_requested = threading.Event()
 
 
 def get_config() -> dict:
-    """파이프라인 전체가 공유하는 단일 설정 dict."""
+    """파이프라인 전체가 공유하는 단일 설정 dict. apply_config()가 먼저 호출돼 있어야 한다 —
+    control-api가 유일한 설정 출처라 로컬 기본값으로 대신 채워주지 않는다."""
     with _lock:
+        if _config is None:
+            raise RuntimeError("설정이 아직 없다 — apply_config()를 먼저 호출해야 한다")
         return _config
 
 

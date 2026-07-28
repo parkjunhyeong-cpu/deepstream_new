@@ -27,7 +27,7 @@ import state
 from config import PROJECT_ROOT
 from logger import get_logger
 from pipeline import build_pipeline
-from probes import add_detection_probe, add_fps_probe
+from probes import add_detection_probe, add_fps_probe, add_zone_probe
 from webview import WebView
 
 logger = get_logger("main")
@@ -104,7 +104,7 @@ def main() -> int:
     cfg = state.get_config()
 
     Gst.init(None)
-    pipeline, pgie, tracker, sink = build_pipeline(cfg, encode=not args.fakesink)
+    pipeline, pgie, tracker, tiler, sink = build_pipeline(cfg, encode=not args.fakesink)
 
     webview = None
     add_fps_probe(sink.get_static_pad("sink"), label="tiled")
@@ -112,6 +112,8 @@ def main() -> int:
     # 숫자가 다르면 트래커가 (예: probationAge 등으로) 일부를 걸러내고 있다는 뜻.
     add_detection_probe(pgie.get_static_pad("src"), label="pgie-forklift")
     add_detection_probe(tracker.get_static_pad("src"), label="tracker-forklift")
+
+    add_zone_probe(tiler.get_static_pad("src"), cfg["pipeline"]["zone"])
 
     if not args.fakesink:
         webview = WebView(cfg["output"]["web"], PROJECT_ROOT / "public" / "index.html")

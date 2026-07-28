@@ -51,6 +51,10 @@ DEFAULT_CONFIG = {
             "display_text": True,
             "display_fps": True,
         },
+        "zone": {  # forklift 중심에 그리는 고정 반경 원 — class_id는 pgie_forklift.txt의 class-attrs-0(forklift) 기준
+            "class_id": 0,
+            "radius_px": 150,
+        },
     },
     "output": {
         "web": {

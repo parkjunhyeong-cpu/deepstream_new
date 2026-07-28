@@ -22,14 +22,12 @@ def get_config() -> dict:
         return _config
 
 
-def apply_input_config(input_cfg: dict) -> dict:
-    """control-api에서 받은 input 섹션을 반영하고 derived 값을 다시 계산한다.
-    pipeline/output 섹션은 그대로 config.py의 기본값을 쓴다 (control-api는 input만 다룬다)."""
+def apply_config(new_cfg: dict) -> dict:
+    """control-api가 준 설정(input/pipeline/output 전체)으로 통째로 교체하고 derived 값을 다시
+    계산한다. control-api가 전체 설정의 단일 출처라 부분 병합이 아니라 항상 전체 교체다."""
     global _config
     with _lock:
-        merged = copy.deepcopy(_config)
-        merged["input"] = input_cfg
-        _config = compute_derived(merged)
+        _config = compute_derived(copy.deepcopy(new_cfg))
         logger.info("설정 반영: 소스 %d개", _config["input"]["num_sources"])
         return _config
 

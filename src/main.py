@@ -78,8 +78,8 @@ class ConfigChangeHandler:
     def __init__(self, loop: GLib.MainLoop):
         self.loop = loop
 
-    def __call__(self, new_input: dict) -> None:
-        state.apply_input_config(new_input)
+    def __call__(self, new_config: dict) -> None:
+        state.apply_config(new_config)
         state.request_restart()
         self.loop.quit()
 
@@ -99,8 +99,8 @@ def main() -> int:
     if args.no_control_api:
         logger.warning("--no-control-api: control-api 안 붙고 DEFAULT_CONFIG로 실행")
     else:
-        initial_input = control_api.fetch_config()
-        state.apply_input_config(initial_input)
+        initial_config = control_api.fetch_config()
+        state.apply_config(initial_config)
     cfg = state.get_config()
 
     Gst.init(None)

@@ -18,16 +18,74 @@ message Source {
   int32 source_height = 4;
 }
 
+message Resize {
+  int32 width = 1;
+  int32 height = 2;
+}
+
+message Framerate {
+  int32 target = 1; // 소스 실측값과 맞춘다 (batched_push_timeout이 여기서 유도됨)
+}
+
 message InputConfig {
   repeated Source sources = 1;
-  int32 resize_width = 2;
-  int32 resize_height = 3;
-  int32 framerate_target = 4;
-  int32 reconnect_sec = 5;
+  Resize resize = 2; // streammux 출력 해상도 (채널당)
+  Framerate framerate = 3;
+  int32 reconnect_sec = 4;
+}
+
+message InferenceModel {
+  bool enabled = 1;
+  string config = 2; // PROJECT_ROOT 기준, resolve()로 절대경로화
+  int32 infer_dim = 3;
+  repeated string labels = 4;
+}
+
+message TrackerConfig {
+  string config = 1; // 알고리즘 설정만 우리가 제공, .so는 DeepStream 번들 사용
+  int32 width = 2;
+  int32 height = 3;
+}
+
+message OsdConfig {
+  bool display_bbox = 1;
+  bool display_text = 2;
+  bool display_fps = 3;
+}
+
+message ZoneConfig {
+  // forklift 중심에 그리는 고정 반경 원 — class_id는 pgie_forklift.txt의 class-attrs-0(forklift) 기준
+  int32 class_id = 1;
+  int32 radius_px = 2;
+}
+
+message PipelineConfig {
+  int32 network_mode = 1; // 0=FP32, 1=INT8, 2=FP16
+  map<string, InferenceModel> inference = 2;
+  TrackerConfig tracker = 3;
+  OsdConfig osd = 4;
+  ZoneConfig zone = 5;
+}
+
+message WebOutputConfig {
+  string host = 1;
+  int32 port = 2;
+  int32 jpeg_quality = 3;
+  int32 max_fps = 4;
+}
+
+message OutputConfig {
+  WebOutputConfig web = 1;
+}
+
+message Config {
+  InputConfig input = 1;
+  PipelineConfig pipeline = 2;
+  OutputConfig output = 3;
 }
 
 message SetConfigRequest {
-  InputConfig input = 1;
+  Config config = 1;
 }
 
 message SetConfigResponse {
@@ -38,7 +96,7 @@ message SetConfigResponse {
 message GetConfigRequest {}
 
 message GetConfigResponse {
-  InputConfig input = 1;
+  Config config = 1;
 }
 
 message WatchConfigRequest {}

@@ -34,11 +34,11 @@ DEFAULT_CONFIG = {
     "pipeline": {
         "network_mode": 2,  # 0=FP32, 1=INT8, 2=FP16
         "inference": {
-            "human": {
+            "forklift": {
                 "enabled": True,
-                "config": "configs/pgie_human.txt",  # PROJECT_ROOT 기준, resolve()로 절대경로화
+                "config": "configs/pgie_forklift.txt",  # PROJECT_ROOT 기준, resolve()로 절대경로화
                 "infer_dim": 640,
-                "labels": ["person"],
+                "labels": ["forklift"],
             },
         },
         "tracker": {

@@ -2,20 +2,20 @@
 gpu-id=0
 net-scale-factor=0.00392156862
 model-color-format=0
-onnx-file=../models/20260706_DET_HUMAN_YOLO26s.onnx
-labelfile-path=labels_human.txt
+onnx-file=../models/20260526-ForkliftDet-yolo11s.pt.onnx
+labelfile-path=labels_forklift.txt
 custom-lib-path=../plugins/yolo-custom/nvdsinfer_custom_impl_Yolo/libnvdsinfer_custom_impl_Yolo.so
 infer-dims=3;640;640
 maintain-aspect-ratio=1
 symmetric-padding=1
 network-mode=2
-num-detected-classes=1
+num-detected-classes=2
 process-mode=1
-gie-unique-id=1
+gie-unique-id=6
 cluster-mode=2
 parse-bbox-func-name=NvDsInferParseYolo
 
-[class-attrs-all]
+[class-attrs-0]
 nms-iou-threshold=0.45
-pre-cluster-threshold=0.7
+pre-cluster-threshold=0.5
 topk=10

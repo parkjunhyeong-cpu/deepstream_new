@@ -6,7 +6,7 @@ BaseConfig:
   minTrailingScore4Overall: 0.0
   minHits4Confirmation: 1
   maxShadowTrailingAge: 30
-  probationAge: 3
+  probationAge: 1
   earlyTerminationAge: 1
 
 TargetManagement:

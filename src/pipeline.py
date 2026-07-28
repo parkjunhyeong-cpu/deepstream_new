@@ -83,7 +83,7 @@ def _build_pgie(model_cfg: dict, num_sources: int) -> Gst.Element:
 
 def _build_tracker(tracker_cfg: dict) -> Gst.Element:
     """PGIE가 찾은 박스들에 프레임을 넘나드는 고유 object-id를 붙인다. 좌표는 안 바꾸고
-    identity만 유지시켜서 '같은 사람'을 프레임마다 이어서 볼 수 있게 한다 (예: 중복 카운트 방지).
+    identity만 유지시켜서 '같은 객체'를 프레임마다 이어서 볼 수 있게 한다 (예: 중복 카운트 방지).
     ll-lib-file은 DeepStream 번들 라이브러리, ll-config-file만 프로젝트가 제공한다."""
     tracker = _make("nvtracker", "tracker")
     tracker.set_property("tracker-width", tracker_cfg["width"])
@@ -165,10 +165,11 @@ def build_fakesink(pipeline: Gst.Pipeline) -> Gst.Element:
 def build_pipeline(
     cfg: dict, encode: bool = True
 ) -> tuple[Gst.Pipeline, Gst.Element, Gst.Element, Gst.Element]:
-    """source_bin*N -> streammux -> pgie(human) -> tracker -> tiler -> osd
+    """source_bin*N -> streammux -> pgie(forklift) -> tracker -> tiler -> osd
     -> (nvvideoconvert -> jpegenc -> appsink | fakesink).
 
-    SGIE(얼굴)는 안 하기로 함.
+    SGIE는 안 하기로 함 (GPU 부담 때문에 모델을 사람 단일 클래스에서 forklift 단일 클래스로
+    교체하는 방식 — PGIE를 추가로 병렬/직렬 체이닝하지 않는다).
 
     소스가 1개든 N개든 같은 경로를 탄다 — N=1이면 tiler가 1x1이 될 뿐이다.
     encode=False면 인코딩 없이 fakesink로 받아 소스 연결/FPS만 확인한다.
@@ -190,7 +191,7 @@ def build_pipeline(
         sink_pad = streammux.request_pad_simple(f"sink_{i}")  # pad-added 오기 전에 미리 요청
         source_bin.connect("pad-added", on_pad_added, sink_pad, i)
 
-    pgie = _build_pgie(cfg["pipeline"]["inference"]["human"], inp["num_sources"])
+    pgie = _build_pgie(cfg["pipeline"]["inference"]["forklift"], inp["num_sources"])
     pipeline.add(pgie)
 
     tracker = _build_tracker(cfg["pipeline"]["tracker"])

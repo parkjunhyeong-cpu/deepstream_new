@@ -110,8 +110,8 @@ def main() -> int:
     add_fps_probe(sink.get_static_pad("sink"), label="tiled")
     # pgie 직후(트래커 전) vs tracker 직후(트래커 후) 검출 수를 비교하려고 둘 다 붙인다 —
     # 숫자가 다르면 트래커가 (예: probationAge 등으로) 일부를 걸러내고 있다는 뜻.
-    add_detection_probe(pgie.get_static_pad("src"), label="pgie-human")
-    add_detection_probe(tracker.get_static_pad("src"), label="tracker-human")
+    add_detection_probe(pgie.get_static_pad("src"), label="pgie-forklift")
+    add_detection_probe(tracker.get_static_pad("src"), label="tracker-forklift")
 
     if not args.fakesink:
         webview = WebView(cfg["output"]["web"], PROJECT_ROOT / "public" / "index.html")

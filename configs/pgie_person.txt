@@ -1,0 +1,27 @@
+[property]
+gpu-id=0
+net-scale-factor=0.00392156862
+model-color-format=0
+# 사람 전용 검출 모델(별도 PGIE, forklift와 직렬 체이닝). YOLO 계열 가정 —
+# 다른 아키텍처면 parse-bbox-func-name/custom-lib-path를 그 모델에 맞게 교체하세요.
+# 모델 파일은 models/에 직접 배치해야 합니다(아직 없는 플레이스홀더).
+onnx-file=../models/person-yolo11s.onnx
+labelfile-path=labels_person.txt
+custom-lib-path=../plugins/yolo-custom/nvdsinfer_custom_impl_Yolo/libnvdsinfer_custom_impl_Yolo.so
+infer-dims=3;640;640
+maintain-aspect-ratio=1
+symmetric-padding=1
+network-mode=2
+num-detected-classes=1
+process-mode=1
+# gie-unique-id는 forklift(6)와 반드시 달라야 함 — 메타 소유 gie를 구분한다.
+gie-unique-id=7
+cluster-mode=2
+parse-bbox-func-name=NvDsInferParseYolo
+
+# 사람은 tracker 기준 완화 요청. nvtracker엔 클래스별 임계값이 없어, 사람 전용 PGIE의
+# detector 문턱을 forklift(0.5)보다 낮은 0.25로 잡아 더 관대하게 검출→트래커로 더 많이 넘긴다.
+[class-attrs-0]
+nms-iou-threshold=0.45
+pre-cluster-threshold=0.25
+topk=20

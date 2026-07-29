@@ -96,14 +96,16 @@ def main() -> int:
     cfg = state.get_config()
 
     Gst.init(None)
-    pipeline, pgie, tracker, tiler, sink = build_pipeline(cfg, encode=not args.fakesink)
+    pipeline, pgies, tracker, tiler, sink = build_pipeline(cfg, encode=not args.fakesink)
 
     webview = None
     add_fps_probe(sink.get_static_pad("sink"), label="tiled")
-    # pgie 직후(트래커 전) vs tracker 직후(트래커 후) 검출 수를 비교하려고 둘 다 붙인다 —
+    # PGIE 체인 끝(트래커 전) vs tracker 직후(트래커 후) 검출 수를 비교하려고 둘 다 붙인다 —
     # 숫자가 다르면 트래커가 (예: probationAge 등으로) 일부를 걸러내고 있다는 뜻.
-    add_detection_probe(pgie.get_static_pad("src"), label="pgie-forklift")
-    add_detection_probe(tracker.get_static_pad("src"), label="tracker-forklift")
+    # 마지막 PGIE의 src pad엔 forklift+person 검출이 모두 모여 있고, 프로브가 클래스별로 나눠
+    # 로그하므로 사람 임계값 완화 효과도 여기서 확인된다.
+    add_detection_probe(pgies[-1].get_static_pad("src"), label="pgie")
+    add_detection_probe(tracker.get_static_pad("src"), label="tracker")
 
     add_zone_probe(tiler.get_static_pad("src"), cfg["pipeline"]["zone"])
 

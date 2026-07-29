@@ -61,11 +61,14 @@ def _build_tiler(tiler_cfg: dict) -> Gst.Element:
     return tiler
 
 
-def _build_pgie(model_cfg: dict, num_sources: int) -> Gst.Element:
-    """1차 추론(PGIE). config-file-path를 세팅하는 순간 nvinfer가 그 txt를 즉시 파싱해서
+def _build_pgie(name: str, model_cfg: dict, num_sources: int) -> Gst.Element:
+    """1차 추론(PGIE) 하나. config-file-path를 세팅하는 순간 nvinfer가 그 txt를 즉시 파싱해서
     process-mode/네트워크 shape 등 내부 속성을 채운다. gie-unique-id는 절대 하드코딩하지 않고
-    세팅 후 get_property로 다시 읽어서 검증한다 (가이드 4.4, 커밋 e2737dd가 고친 버그)."""
-    pgie = _make("nvinfer", "pgie")
+    세팅 후 get_property로 다시 읽어서 검증한다 (가이드 4.4, 커밋 e2737dd가 고친 버그).
+
+    element 이름은 모델명으로 고유화한다 — PGIE가 여러 개(forklift/person 등)면 같은 이름이
+    파이프라인에 두 번 add될 수 없기 때문이다."""
+    pgie = _make("nvinfer", f"pgie_{name}")
     pgie.set_property("config-file-path", resolve(model_cfg["config"]))
     pgie.set_property("batch-size", num_sources)  # nvdspreprocess 없이 바로 붙이므로 streammux와 맞춘다
 
@@ -77,8 +80,24 @@ def _build_pgie(model_cfg: dict, num_sources: int) -> Gst.Element:
             model_cfg["config"], process_mode,
         )
 
-    logger.info("pgie: %s (unique-id=%d)", model_cfg["config"], unique_id)
+    logger.info("pgie[%s]: %s (unique-id=%d)", name, model_cfg["config"], unique_id)
     return pgie
+
+
+def _build_pgies(inference_cfg: dict, num_sources: int) -> list[Gst.Element]:
+    """inference 맵(control-api 소유, map<string, InferenceModel>)에서 enabled된 모델마다
+    PGIE를 하나씩 만들어 리스트로 돌려준다. forklift 단일이든 forklift+person이든 같은 경로를
+    탄다 — 여러 개면 build_pipeline이 streammux 뒤에 직렬로 이어붙인다.
+    별도 SGIE/재학습 없이, 사람 모델을 독립 PGIE로 추가하는 방식(사용자 결정)."""
+    pgies = []
+    for name, model_cfg in inference_cfg.items():
+        if not model_cfg.get("enabled", True):
+            logger.info("pgie[%s] 비활성(enabled=false) — 건너뜀", name)
+            continue
+        pgies.append(_build_pgie(name, model_cfg, num_sources))
+    if not pgies:
+        raise RuntimeError("inference에 enabled된 모델이 하나도 없다 — control-api 설정을 확인")
+    return pgies
 
 
 def _build_tracker(tracker_cfg: dict) -> Gst.Element:
@@ -165,15 +184,19 @@ def build_fakesink(pipeline: Gst.Pipeline) -> Gst.Element:
 def build_pipeline(
     cfg: dict, encode: bool = True
 ) -> tuple[Gst.Pipeline, Gst.Element, Gst.Element, Gst.Element, Gst.Element]:
-    """source_bin*N -> streammux -> pgie(forklift) -> tracker -> tiler -> osd
+    """source_bin*N -> streammux -> pgie(forklift) [-> pgie(person) ...] -> tracker -> tiler -> osd
     -> (nvvideoconvert -> jpegenc -> appsink | fakesink).
 
-    SGIE는 안 하기로 함 (GPU 부담 때문에 모델을 사람 단일 클래스에서 forklift 단일 클래스로
-    교체하는 방식 — PGIE를 추가로 병렬/직렬 체이닝하지 않는다).
+    PGIE는 inference 맵(control-api 소유)의 enabled 모델 수만큼 만들어 streammux 뒤에 직렬로
+    이어붙인다. 사람 탐지는 forklift 모델에 합치지 않고 사람 전용 모델을 독립 PGIE로 추가하는
+    방식(사용자 결정) — control-api가 inference 맵에 person 엔트리(config=configs/pgie_person.txt,
+    enabled=true)를 넣으면 자동으로 체인에 붙는다. "사람은 tracker 기준 완화"는 nvtracker에
+    클래스별 임계값이 없어, 사람 PGIE의 detector 문턱(pre-cluster-threshold)을 낮추는 방식으로
+    구현한다 (configs/pgie_person.txt).
 
     소스가 1개든 N개든 같은 경로를 탄다 — N=1이면 tiler가 1x1이 될 뿐이다.
     encode=False면 인코딩 없이 fakesink로 받아 소스 연결/FPS만 확인한다.
-    (pipeline, pgie, tracker, tiler, 마지막 sink element) 반환 — 이미 만든 element를 그대로
+    (pipeline, pgies(list), tracker, tiler, 마지막 sink element) 반환 — 이미 만든 element를 그대로
     넘겨주는 것뿐이라 호출자가 이름으로 다시 찾을(get_by_name) 필요가 없다. tiler를 넘기는 건
     zone probe가 타일 합성 좌표계로 바뀐 뒤(tiler src pad)에 붙어야 하기 때문이다.
     """
@@ -192,8 +215,9 @@ def build_pipeline(
         sink_pad = streammux.request_pad_simple(f"sink_{i}")  # pad-added 오기 전에 미리 요청
         source_bin.connect("pad-added", on_pad_added, sink_pad, i)
 
-    pgie = _build_pgie(cfg["pipeline"]["inference"]["forklift"], inp["num_sources"])
-    pipeline.add(pgie)
+    pgies = _build_pgies(cfg["pipeline"]["inference"], inp["num_sources"])
+    for pgie in pgies:
+        pipeline.add(pgie)
 
     tracker = _build_tracker(cfg["pipeline"]["tracker"])
     pipeline.add(tracker)
@@ -212,10 +236,13 @@ def build_pipeline(
         sink = build_fakesink(pipeline)
         tail_head = sink
 
-    _link(streammux, pgie)
-    _link(pgie, tracker)
+    # streammux -> pgie[0] -> pgie[1] -> ... -> tracker (PGIE 직렬 체인)
+    _link(streammux, pgies[0])
+    for upstream, downstream in zip(pgies, pgies[1:]):
+        _link(upstream, downstream)
+    _link(pgies[-1], tracker)
     _link(tracker, tiler)
     _link(tiler, osd)
     _link(osd, tail_head)
 
-    return pipeline, pgie, tracker, tiler, sink
+    return pipeline, pgies, tracker, tiler, sink

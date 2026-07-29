@@ -41,6 +41,10 @@ def _proto_to_config(proto_cfg: control_api_pb2.Config) -> dict:
                     "url": src.url,
                     "sourceWidth": src.source_width,
                     "sourceHeight": src.source_height,
+                    # BEV 호모그래피 캘리브레이션. 비어 있으면 zone probe가 이 소스를 건너뛴다
+                    # (probes/homography.py의 build_homographies).
+                    "image_points": [{"x": p.x, "y": p.y} for p in src.image_points],
+                    "ground_points": [{"x": p.x, "y": p.y} for p in src.ground_points],
                 }
                 for src in inp.sources
             ],
@@ -71,7 +75,7 @@ def _proto_to_config(proto_cfg: control_api_pb2.Config) -> dict:
             },
             "zone": {
                 "class_id": pipeline.zone.class_id,
-                "radius_px": pipeline.zone.radius_px,
+                "radius_m": pipeline.zone.radius_m,
             },
         },
         "output": {

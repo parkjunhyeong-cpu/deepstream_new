@@ -11,11 +11,21 @@ service ControlApi {
   rpc WatchConfig(WatchConfigRequest) returns (stream GetConfigResponse);
 }
 
+message Point2D {
+  float x = 1;
+  float y = 2;
+}
+
 message Source {
   string name = 1;
   string url = 2;
   int32 source_width = 3;
   int32 source_height = 4;
+  // BEV(Bird's-Eye-View) 호모그래피 계산용 대응점. image_points[i] <-> ground_points[i] 인덱스로
+  // 매칭, 4쌍 이상 필요 — 카메라 1대당 한 번 하는 캘리브레이션 값. 비어 있으면 이 소스는
+  // zone(원 그리기/침입 감지) 기능을 건너뛴다 (zone.py의 build_homographies 참고).
+  repeated Point2D image_points = 5;   // 카메라 이미지 좌표(픽셀) — input.resize 크기 기준 원본 프레임
+  repeated Point2D ground_points = 6;  // 실측 지면 좌표(단위 자유, ZoneConfig.radius_m과 같은 단위여야 함)
 }
 
 message Resize {
@@ -54,9 +64,12 @@ message OsdConfig {
 }
 
 message ZoneConfig {
-  // forklift 중심에 그리는 고정 반경 원 — class_id는 pgie_forklift.txt의 class-attrs-0(forklift) 기준
+  // forklift 중심에 그리는 BEV 원 — class_id는 pgie_forklift.txt의 class-attrs-0(forklift) 기준
   int32 class_id = 1;
-  int32 radius_px = 2;
+  // 화면 픽셀 반경(radius_px) 대신 지면 실측 반경으로 변경 — 카메라 거리/각도와 무관하게 실제
+  // 위험 반경이 정확해야 해서 BEV(호모그래피) 좌표계 기준으로 바꿨다. Source.ground_points와
+  // 같은 단위(예: 미터)여야 한다.
+  float radius_m = 2;
 }
 
 message PipelineConfig {

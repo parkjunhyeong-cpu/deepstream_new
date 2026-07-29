@@ -22,4 +22,14 @@ def attach_all_probes(pgies: dict, tracker, tiler, sink, cfg: dict) -> None:
 
     # 그리기(ZoneDrawProbe)와 침입 감지(ZoneIntrusionProbe)는 관심사가 달라 내부적으로 별도
     # probe로 분리되어 있지만, 같은 pad에 같이 붙이는 호출부는 하나로 유지된다.
-    add_zone_probes(tiler.get_static_pad("src"), pgies, cfg["pipeline"]["zone"])
+    # tiler_cols/resize_width/resize_height는 BEV 호모그래피가 합성 캔버스 좌표를 소스별 로컬
+    # 좌표로 되돌리는 데 필요하다 (zone.py의 _tile_offset 참고).
+    add_zone_probes(
+        tiler.get_static_pad("src"),
+        pgies,
+        cfg["pipeline"]["zone"],
+        cfg["input"]["sources"],
+        cfg["pipeline"]["tiler"]["columns"],
+        cfg["input"]["resize"]["width"],
+        cfg["input"]["resize"]["height"],
+    )

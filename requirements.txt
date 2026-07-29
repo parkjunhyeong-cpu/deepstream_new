@@ -1,3 +1,6 @@
 PyYAML>=6.0
 grpcio>=1.60
 grpcio-tools>=1.60
+# BEV(호모그래피) zone 계산용 — probes/homography.py의 cv2.findHomography/perspectiveTransform
+numpy>=1.24
+opencv-python-headless>=4.9

@@ -84,17 +84,22 @@ def _build_pgie(name: str, model_cfg: dict, num_sources: int) -> Gst.Element:
     return pgie
 
 
-def _build_pgies(inference_cfg: dict, num_sources: int) -> list[Gst.Element]:
+def _build_pgies(inference_cfg: dict, num_sources: int) -> dict[str, Gst.Element]:
     """inference 맵(control-api 소유, map<string, InferenceModel>)에서 enabled된 모델마다
-    PGIE를 하나씩 만들어 리스트로 돌려준다. forklift 단일이든 forklift+person이든 같은 경로를
-    탄다 — 여러 개면 build_pipeline이 streammux 뒤에 직렬로 이어붙인다.
-    별도 SGIE/재학습 없이, 사람 모델을 독립 PGIE로 추가하는 방식(사용자 결정)."""
-    pgies = []
+    PGIE를 하나씩 만들어 {모델명: element} dict로 돌려준다. forklift 단일이든 forklift+person이든
+    같은 경로를 탄다 — 여러 개면 build_pipeline이 streammux 뒤에 직렬로 이어붙인다.
+    별도 SGIE/재학습 없이, 사람 모델을 독립 PGIE로 추가하는 방식(사용자 결정).
+
+    리스트가 아니라 이름 있는 dict로 돌려주는 이유: forklift/person처럼 단일 클래스 모델이
+    여럿이면 class_id만으로는 어느 PGIE가 만든 객체인지 구분이 안 된다(둘 다 class_id=0).
+    zone probe 등 소비자가 obj_meta.unique_component_id와 비교할 gie-unique-id를 이름으로
+    정확히 찾아 써야 하므로, 체인 순서(리스트 인덱스)에 의존하지 않게 한다."""
+    pgies = {}
     for name, model_cfg in inference_cfg.items():
         if not model_cfg.get("enabled", True):
             logger.info("pgie[%s] 비활성(enabled=false) — 건너뜀", name)
             continue
-        pgies.append(_build_pgie(name, model_cfg, num_sources))
+        pgies[name] = _build_pgie(name, model_cfg, num_sources)
     if not pgies:
         raise RuntimeError("inference에 enabled된 모델이 하나도 없다 — control-api 설정을 확인")
     return pgies
@@ -196,9 +201,9 @@ def build_pipeline(
 
     소스가 1개든 N개든 같은 경로를 탄다 — N=1이면 tiler가 1x1이 될 뿐이다.
     encode=False면 인코딩 없이 fakesink로 받아 소스 연결/FPS만 확인한다.
-    (pipeline, pgies(list), tracker, tiler, 마지막 sink element) 반환 — 이미 만든 element를 그대로
-    넘겨주는 것뿐이라 호출자가 이름으로 다시 찾을(get_by_name) 필요가 없다. tiler를 넘기는 건
-    zone probe가 타일 합성 좌표계로 바뀐 뒤(tiler src pad)에 붙어야 하기 때문이다.
+    (pipeline, pgies(dict[모델명, element]), tracker, tiler, 마지막 sink element) 반환 — 이미
+    만든 element를 그대로 넘겨주는 것뿐이라 호출자가 이름으로 다시 찾을(get_by_name) 필요가 없다.
+    tiler를 넘기는 건 zone probe가 타일 합성 좌표계로 바뀐 뒤(tiler src pad)에 붙어야 하기 때문이다.
     """
     inp = cfg["input"]
     resize = inp["resize"]
@@ -216,7 +221,7 @@ def build_pipeline(
         source_bin.connect("pad-added", on_pad_added, sink_pad, i)
 
     pgies = _build_pgies(cfg["pipeline"]["inference"], inp["num_sources"])
-    for pgie in pgies:
+    for pgie in pgies.values():
         pipeline.add(pgie)
 
     tracker = _build_tracker(cfg["pipeline"]["tracker"])
@@ -236,11 +241,12 @@ def build_pipeline(
         sink = build_fakesink(pipeline)
         tail_head = sink
 
-    # streammux -> pgie[0] -> pgie[1] -> ... -> tracker (PGIE 직렬 체인)
-    _link(streammux, pgies[0])
-    for upstream, downstream in zip(pgies, pgies[1:]):
+    # streammux -> pgie[0] -> pgie[1] -> ... -> tracker (PGIE 직렬 체인, dict 순서 = 삽입 순서)
+    pgie_chain = list(pgies.values())
+    _link(streammux, pgie_chain[0])
+    for upstream, downstream in zip(pgie_chain, pgie_chain[1:]):
         _link(upstream, downstream)
-    _link(pgies[-1], tracker)
+    _link(pgie_chain[-1], tracker)
     _link(tracker, tiler)
     _link(tiler, osd)
     _link(osd, tail_head)

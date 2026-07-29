@@ -5,7 +5,7 @@ model-color-format=0
 # 사람 전용 검출 모델(별도 PGIE, forklift와 직렬 체이닝). YOLO 계열 가정 —
 # 다른 아키텍처면 parse-bbox-func-name/custom-lib-path를 그 모델에 맞게 교체하세요.
 # 모델 파일은 models/에 직접 배치해야 합니다(아직 없는 플레이스홀더).
-onnx-file=../models/person-yolo11s.onnx
+onnx-file=../models/20260706_DET_HUMAN_YOLO26s.onnx
 labelfile-path=labels_person.txt
 custom-lib-path=../plugins/yolo-custom/nvdsinfer_custom_impl_Yolo/libnvdsinfer_custom_impl_Yolo.so
 infer-dims=3;640;640

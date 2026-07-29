@@ -1,5 +1,6 @@
 from .detections import DetectionProbe, add_detection_probe
 from .fps import FpsProbe, add_fps_probe
+from .wiring import attach_all_probes
 from .zone import ZoneDrawProbe, ZoneIntrusionProbe, add_zone_probes
 
 __all__ = [
@@ -10,4 +11,5 @@ __all__ = [
     "ZoneDrawProbe",
     "ZoneIntrusionProbe",
     "add_zone_probes",
+    "attach_all_probes",
 ]

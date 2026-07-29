@@ -27,7 +27,7 @@ import state
 from config import PROJECT_ROOT
 from logger import get_logger
 from pipeline import build_pipeline
-from probes import add_detection_probe, add_fps_probe, add_zone_probes
+from probes import attach_all_probes
 from webview import WebView
 
 logger = get_logger("main")
@@ -99,13 +99,7 @@ def main() -> int:
     pipeline, pgies, tracker, tiler, sink = build_pipeline(cfg, encode=not args.fakesink)
 
     webview = None
-    add_fps_probe(sink.get_static_pad("sink"), label="tiled")
-
-    last_pgie = list(pgies.values())[-1]
-    add_detection_probe(last_pgie.get_static_pad("src"), label="pgie")
-    add_detection_probe(tracker.get_static_pad("src"), label="tracker")
-    
-    add_zone_probes(tiler.get_static_pad("src"), pgies, cfg["pipeline"]["zone"])
+    attach_all_probes(pgies, tracker, tiler, sink, cfg)
 
     if not args.fakesink:
         webview = WebView(cfg["output"]["web"], PROJECT_ROOT / "public" / "index.html")

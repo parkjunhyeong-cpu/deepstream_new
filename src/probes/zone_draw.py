@@ -54,7 +54,12 @@ def _draw_ring(batch_meta, frame_meta, display_meta, points: list[tuple[float, f
             display_meta = pyds.nvds_acquire_display_meta_from_pool(batch_meta)
             display_meta.num_lines = 0
         line = display_meta.line_params[display_meta.num_lines]
-        line.x1, line.y1, line.x2, line.y2 = int(x1), int(y1), int(x2), int(y2)
+        # NvOSD_LineParams.x1/y1/x2/y2는 부호 없는 정수(guint)라 음수를 못 받는다. 호모그래피로
+        # 역투영한 점은 forklift가 캘리브레이션 경계 근처에 있으면 화면 밖(음수)으로 나갈 수 있다
+        # — 정상적인 케이스라 예외 처리 대신 0으로 클램프해서 화면 가장자리에 붙여 그린다.
+        line.x1, line.y1, line.x2, line.y2 = (
+            max(0, int(x1)), max(0, int(y1)), max(0, int(x2)), max(0, int(y2)),
+        )
         line.line_width = 2
         line.line_color.set(1.0, 0.0, 0.0, 0.6)
         display_meta.num_lines += 1

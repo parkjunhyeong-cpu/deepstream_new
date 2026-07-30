@@ -13,13 +13,20 @@ from .homography import Homography
 logger = get_logger(__name__)
 
 
+# zone_draw.py의 FOOT_POINT_BLEND와 반드시 같은 값이어야 한다 — 그리기와 침입 판정이 같은
+# 지면 접점을 기준으로 삼아야 시각적으로 보이는 원과 실제 판정이 어긋나지 않는다.
+FOOT_POINT_BLEND = 0.25
+
+
 def _ground_contact_point(obj_meta) -> tuple[float, float]:
-    """bbox 하단 중앙 — 카메라가 내려다보는 각도에서 물체가 지면에 닿는 지점의 근사치.
-    bbox 중심(centroid)을 쓰면 물체 높이만큼 지면에서 떠 있는 점이 되어 호모그래피 투영이
-    어긋난다 (BEV/IPM에서 흔히 쓰는 표준 근사). zone_draw.py에도 같은 함수가 있다 —
-    3줄짜리 순수 함수라 별도 공유 모듈을 두는 것보다 각자 갖는 쪽을 택했다."""
+    """bbox 하단 중앙에서 top-center 쪽으로 FOOT_POINT_BLEND만큼 당긴 지점 — "cuboid 중심"의
+    근사치. 자세한 이유는 zone_draw.py의 동일 함수 docstring 참고. zone_draw.py에도 같은
+    함수가 있다 — 몇 줄짜리 순수 함수라 별도 공유 모듈을 두는 것보다 각자 갖는 쪽을 택했다."""
     rect = obj_meta.rect_params
-    return rect.left + rect.width / 2, rect.top + rect.height
+    x = rect.left + rect.width / 2
+    bottom_y = rect.top + rect.height
+    y = bottom_y - FOOT_POINT_BLEND * rect.height
+    return x, y
 
 
 def _tile_offset(source_id: int, tiler_cols: int, resize_w: int, resize_h: int) -> tuple[int, int]:

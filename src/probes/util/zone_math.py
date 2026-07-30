@@ -35,17 +35,6 @@ def ground_contact_point(obj_meta) -> tuple[float, float]:
     return x, y
 
 
-def tile_offset(source_id: int, tiler_cols: int, resize_w: int, resize_h: int) -> tuple[int, int]:
-    """zone_draw는 tiler 이후(합성 캔버스 좌표) pad에 붙어 있는데, 캘리브레이션(image_points)은
-    합성 전 원본 카메라 프레임(input.resize 크기) 기준으로 잡는 게 자연스럽다. 그래서 호모그래피를
-    적용하기 전엔 이 오프셋을 빼서 '그 소스만의 로컬 좌표'로 되돌리고, 그린 결과를 다시 합성
-    캔버스에 놓기 전엔 더해준다. source_id -> 타일 위치가 소스 순서(streammux sink_i 요청 순서)와
-    그대로 대응한다는 전제 — nvmultistreamtiler의 통상적 동작이지만 실제 박스에서 확인이 필요하다."""
-    col = source_id % tiler_cols
-    row = source_id // tiler_cols
-    return col * resize_w, row * resize_h
-
-
 def clip_segment(
     x1: float, y1: float, x2: float, y2: float, xmin: float, ymin: float, xmax: float, ymax: float
 ) -> tuple[float, float, float, float] | None:

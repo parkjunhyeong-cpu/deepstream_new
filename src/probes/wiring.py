@@ -22,14 +22,16 @@ def attach_all_probes(pgies: dict, tracker, tiler, sink, cfg: dict) -> None:
 
     # 그리기(ZoneDrawProbe)와 침입 감지(ZoneIntrusionProbe)는 관심사가 달라 내부적으로 별도
     # probe로 분리되어 있지만, 같은 pad에 같이 붙이는 호출부는 하나로 유지된다.
-    # tiler_cols/resize_width/resize_height는 BEV 호모그래피가 합성 캔버스 좌표를 소스별 로컬
-    # 좌표로 되돌리는 데 필요하다 (zone.py의 _tile_offset 참고).
+    # tiler의 SRC pad(합성 후)가 아니라 SINK pad(합성 전, tracker 직후)에 붙인다 — tiler가
+    # 여러 소스의 frame_meta를 하나로 합쳐버려서(소스별 frame_meta가 사라짐) src pad에서는
+    # 호모그래피가 엉뚱한 소스의 좌표에 적용되는 문제가 있었다. sink pad에서는 frame_meta가
+    # 소스별로 정상 분리돼 있고 좌표도 이미 그 소스의 원본 리사이즈 좌표라 타일 오프셋 계산이
+    # 필요 없다.
     add_zone_probes(
-        tiler.get_static_pad("src"),
+        tiler.get_static_pad("sink"),
         pgies,
         cfg["pipeline"]["zone"],
         cfg["input"]["sources"],
-        cfg["pipeline"]["tiler"]["columns"],
         cfg["input"]["resize"]["width"],
         cfg["input"]["resize"]["height"],
     )

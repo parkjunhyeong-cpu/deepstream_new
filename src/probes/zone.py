@@ -1,6 +1,7 @@
 """forklift BEV zone의 그리기(zone_draw.ZoneDrawProbe)와 침입 감지(zone_intrusion.ZoneIntrusionProbe)를
-같은 pad에 붙이는 조립 지점. 두 probe는 바뀌는 이유가 달라(표현 방식 vs 안전 판정 로직) 파일도
-분리했고, 이 모듈은 pgies/cfg에서 gie-unique-id·호모그래피를 뽑아 둘에 나눠주는 역할만 한다."""
+같은 pad(tiler의 sink pad — 합성 전, tracker 직후)에 붙이는 조립 지점. 두 probe는 바뀌는 이유가
+달라(표현 방식 vs 안전 판정 로직) 파일도 분리했고, 이 모듈은 pgies/cfg에서 gie-unique-id·호모그래피를
+뽑아 둘에 나눠주는 역할만 한다."""
 
 import gi
 
@@ -21,7 +22,6 @@ def add_zone_probes(
     pgies: dict[str, Gst.Element],
     zone_cfg: dict,
     sources_cfg: list[dict],
-    tiler_cols: int,
     resize_width: int,
     resize_height: int,
 ) -> tuple[ZoneDrawProbe, ZoneIntrusionProbe | None]:
@@ -45,7 +45,7 @@ def add_zone_probes(
 
     draw_probe = ZoneDrawProbe(
         zone_cfg["class_id"], zone_cfg["radius_m"], forklift_gie_id, homographies,
-        tiler_cols, resize_width, resize_height, source_names,
+        resize_width, resize_height, source_names,
     )
     pad.add_probe(Gst.PadProbeType.BUFFER, draw_probe)
     logger.info(
@@ -62,7 +62,7 @@ def add_zone_probes(
     person_gie_id = person_pgie.get_property("unique-id")
     intrusion_probe = ZoneIntrusionProbe(
         zone_cfg["class_id"], zone_cfg["radius_m"], forklift_gie_id, person_gie_id, homographies,
-        tiler_cols, resize_width, resize_height, source_names,
+        source_names,
     )
     pad.add_probe(Gst.PadProbeType.BUFFER, intrusion_probe)
     logger.info("zone intrusion probe 등록: person(gie=%d)", person_gie_id)

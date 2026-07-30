@@ -7,7 +7,7 @@ import pyds
 from logger import get_logger
 
 from .util.homography import Homography
-from .util.zone_math import clip_segment, ellipse_from_ground_circle, ground_contact_point, tile_offset
+from .util.zone_math import clip_segment, ellipse_from_ground_circle, ground_contact_point
 
 logger = get_logger(__name__)
 
@@ -28,12 +28,11 @@ def _draw_ring(
     points: list[tuple[float, float]],
     bounds: tuple[float, float, float, float],
 ):
-    """points를 순서대로 이어 닫힌 다각형(고리)을 선분으로 그린다. 각 선분은 이 소스가 속한
-    타일 영역(bounds = (xmin, ymin, xmax, ymax))으로 클리핑한다 — 안 그러면 호모그래피로
-    역투영한 점이 화면 밖으로 나갈 때 도형이 일그러지거나, 옆 채널의 타일 영역까지 선이
-    새어 들어갈 수 있다. 완전히 타일 밖인 선분은 건너뛴다. display_meta 하나가 다 못 담으면
-    새로 하나 더 뽑아 이어붙인다. 마지막으로 쓰던 display_meta를 돌려준다 — 호출자가 프레임
-    끝에서 add_display_meta_to_frame 해야 한다."""
+    """points를 순서대로 이어 닫힌 다각형(고리)을 선분으로 그린다. 각 선분은 이 소스의 원본
+    프레임 경계(bounds = (0, 0, resize_width, resize_height))로 클리핑한다 — 안 그러면
+    호모그래피로 역투영한 점이 화면 밖으로 나갈 때 도형이 일그러진다. 완전히 밖인 선분은
+    건너뛴다. display_meta 하나가 다 못 담으면 새로 하나 더 뽑아 이어붙인다. 마지막으로 쓰던
+    display_meta를 돌려준다 — 호출자가 프레임 끝에서 add_display_meta_to_frame 해야 한다."""
     xmin, ymin, xmax, ymax = bounds
     n = len(points)
     for i in range(n):
@@ -64,6 +63,13 @@ class ZoneDrawProbe:
     그 타원 곡선을 다각형 선분으로 그린다. 카메라 거리/각도에 관계없이 실제 반경이 정확하게
     표현된다.
 
+    이 probe는 tiler의 SINK pad(합성 전, tracker 직후)에 붙는다 — tiler SRC pad(합성 후) 기준으로
+    붙였을 때, tiler가 여러 소스의 frame_meta를 하나로 합쳐버려서(소스별 frame_meta가 사라짐)
+    호모그래피/캘리브레이션이 엉뚱한 소스의 좌표에 적용되는 문제가 있었다. sink pad에서는
+    frame_meta가 소스별로 정상 분리돼 있고 obj_meta.rect_params도 이미 그 소스의 원본 리사이즈
+    좌표라, 타일 오프셋 계산 자체가 필요 없다(이전엔 tile_offset으로 합성 캔버스 좌표 <-> 로컬
+    좌표를 왔다갔다했는데 그게 통째로 사라졌다).
+
     좌표/기하 계산(zone_math.py, pyds 비의존)과 pyds OSD 그리기·probe 배선(이 파일)을 나눴다
     — 전자는 이 프로젝트에서 드물게 컨테이너 밖에서도 단위 테스트가 가능한 부분이라 분리할
     가치가 있었다.
@@ -82,7 +88,6 @@ class ZoneDrawProbe:
         radius_m: float,
         forklift_gie_id: int,
         homographies: list[Homography | None],
-        tiler_cols: int,
         resize_width: int,
         resize_height: int,
         source_names: list[str],
@@ -91,18 +96,14 @@ class ZoneDrawProbe:
         self.radius_m = radius_m
         self.forklift_gie_id = forklift_gie_id
         self.homographies = homographies
-        self.tiler_cols = tiler_cols
         self.resize_width = resize_width
         self.resize_height = resize_height
         # source_id(정수) -> 채널명(control-api의 input.sources[].name, 예: "ch00"). 로그에
-        # 숫자 대신 실제 채널을 남겨서 "source_id=0이 물리적으로 어느 카메라/타일 쪽인지"를
-        # 추측하지 않고 바로 알 수 있게 한다.
+        # 숫자 대신 실제 채널을 남긴다.
         self.source_names = source_names
         # source_id별로 "왜 이 소스는 그리지 않는지"를 한 번만 로그하기 위한 상태. 매 프레임
         # 찍으면 로그가 넘쳐서, 처음 마주친 프레임에서만 남긴다.
         self._warned_source_ids: set[int] = set()
-        # 디버그 로그 스로틀용 프레임 카운터 — 50프레임(=버퍼)에 한 번만 찍는다.
-        self._debug_frame_count = 0
 
     def _channel(self, source_id: int) -> str:
         return self.source_names[source_id] if source_id < len(self.source_names) else f"source_{source_id}"
@@ -112,38 +113,21 @@ class ZoneDrawProbe:
         if gst_buffer is None:
             return Gst.PadProbeReturn.OK
 
-        self._debug_frame_count += 1
-        debug_this_frame = self._debug_frame_count % 50 == 0
-
         batch_meta = pyds.gst_buffer_get_nvds_batch_meta(hash(gst_buffer))
         l_frame = batch_meta.frame_meta_list
+        bounds = (0, 0, self.resize_width, self.resize_height)
 
         while l_frame is not None:
             frame_meta = pyds.NvDsFrameMeta.cast(l_frame.data)
             source_id = frame_meta.source_id
-
-            if debug_this_frame:
-                # 임시 디버그 — homography/매칭 여부와 무관하게, 이 버퍼의 batch_meta.frame_meta_list에
-                # 실제로 어떤 source_id들이 들어있는지, 객체가 몇 개 있는지 그대로 찍는다.
-                # ch01(source_id=1)이 애초에 여기 안 잡히는지부터 확인하려는 것 — 원인 찾으면 제거.
-                logger.info(
-                    "[디버그] frame_meta 발견: channel=%s, source_id=%d, num_obj_meta=%d",
-                    self._channel(source_id), source_id, frame_meta.num_obj_meta,
-                )
-
             homography = self.homographies[source_id] if source_id < len(self.homographies) else None
 
             if homography is None and source_id not in self._warned_source_ids:
                 self._warned_source_ids.add(source_id)
                 if source_id >= len(self.homographies):
-                    # source_id가 homographies 리스트(=control-api의 input.sources 순서) 범위를
-                    # 벗어남 — "source_id가 소스 등록 순서와 그대로 대응한다"는 전제(tile_offset의
-                    # docstring 참고)가 실제로는 안 맞고 있다는 뜻일 수 있다. 특정 채널만 zone이
-                    # 전혀 안 그려진다면 이게 원인일 가능성이 높다.
                     logger.warning(
-                        "source_id=%d(channel=%s)가 등록된 소스 개수(%d)를 벗어남 — source_id가 "
-                        "config의 소스 순서와 다르게 배정되고 있는 것으로 추정. 이 소스는 zone을 "
-                        "그리지 않는다",
+                        "source_id=%d(channel=%s)가 등록된 소스 개수(%d)를 벗어남 — 이 소스는 "
+                        "zone을 그리지 않는다",
                         source_id, self._channel(source_id), len(self.homographies),
                     )
                 else:
@@ -154,50 +138,24 @@ class ZoneDrawProbe:
                     )
 
             if homography is not None:
-                offset_x, offset_y = tile_offset(
-                    source_id, self.tiler_cols, self.resize_width, self.resize_height
-                )
-                # 이 소스가 합성 캔버스에서 차지하는 타일 사각형 — 선분 클리핑 경계로 쓴다.
-                bounds = (offset_x, offset_y, offset_x + self.resize_width, offset_y + self.resize_height)
                 display_meta = None
 
                 l_obj = frame_meta.obj_meta_list
                 while l_obj is not None:
                     obj_meta = pyds.NvDsObjectMeta.cast(l_obj.data)
-
-                    if debug_this_frame:
-                        # 임시 디버그 — 매칭 여부와 상관없이 이 소스에 있는 모든 obj_meta를 그대로
-                        # 찍는다. ch01에서 forklift 매칭 자체가 되는지(gie/class_id가 기대한 값인지)
-                        # 확인하려는 것 — 원인 찾으면 제거.
-                        logger.info(
-                            "[디버그] channel=%s obj: class_id=%d, unique_component_id=%d "
-                            "(기대값: class_id=%d, gie=%d)",
-                            self._channel(source_id), obj_meta.class_id, obj_meta.unique_component_id,
-                            self.class_id, self.forklift_gie_id,
-                        )
-
                     if (
                         obj_meta.unique_component_id == self.forklift_gie_id
                         and obj_meta.class_id == self.class_id
                     ):
-                        lx, ly = ground_contact_point(obj_meta)
-                        local_point = (lx - offset_x, ly - offset_y)
+                        local_point = ground_contact_point(obj_meta)
                         ground_center = homography.to_ground([local_point])[0]
 
                         ring_local = ellipse_from_ground_circle(
                             homography, ground_center, self.radius_m, GROUND_CIRCLE_SEGMENTS
                         )
                         if ring_local:
-                            ring_tile = [(x + offset_x, y + offset_y) for x, y in ring_local]
-                            if debug_this_frame:
-                                # 임시 디버그 — _draw_ring에 넘기기 직전, 실제로 그리려는 좌표 그대로.
-                                # 원인 찾으면 제거.
-                                logger.info(
-                                    "[디버그] channel=%s ring_tile=%s (bounds=%s)",
-                                    self._channel(source_id), ring_tile, bounds,
-                                )
                             display_meta = _draw_ring(
-                                batch_meta, frame_meta, display_meta, ring_tile, bounds
+                                batch_meta, frame_meta, display_meta, ring_local, bounds
                             )
 
                     l_obj = l_obj.next

@@ -29,21 +29,14 @@ def _ground_contact_point(obj_meta) -> tuple[float, float]:
     return x, y
 
 
-def _tile_offset(source_id: int, tiler_cols: int, resize_w: int, resize_h: int) -> tuple[int, int]:
-    """이 probe는 tiler 이후(합성 캔버스 좌표) pad에 붙어 있는데, 캘리브레이션(image_points)은
-    합성 전 원본 카메라 프레임(input.resize 크기) 기준으로 잡는 게 자연스럽다. 그래서 호모그래피를
-    적용하기 전엔 이 오프셋을 빼서 '그 소스만의 로컬 좌표'로 되돌리고, 그린 결과를 다시 합성
-    캔버스에 놓기 전엔 더해준다. source_id -> 타일 위치가 소스 순서(streammux sink_i 요청 순서)와
-    그대로 대응한다는 전제 — nvmultistreamtiler의 통상적 동작이지만 실제 박스에서 확인이 필요하다."""
-    col = source_id % tiler_cols
-    row = source_id // tiler_cols
-    return col * resize_w, row * resize_h
-
-
 class ZoneIntrusionProbe:
     """person의 지면 위치가 forklift 지면 위치에서 실측 반경(radius_m) 안이면 경고 로그를
     남긴다. 픽셀 거리 대신 호모그래피로 변환한 지면 좌표 거리를 비교하므로, 카메라에서 멀리
     있는 forklift든 가까이 있는 forklift든 동일한 실제 반경 기준으로 판정된다.
+
+    zone_draw.ZoneDrawProbe와 마찬가지로 tiler의 SINK pad(합성 전, tracker 직후)에 붙는다 —
+    frame_meta가 소스별로 정상 분리돼 있고 obj_meta.rect_params가 이미 그 소스의 원본 리사이즈
+    좌표라 타일 오프셋 계산이 필요 없다.
 
     순수 감지/알림 담당 — 나중에 로그가 webhook/카프카 알림 등으로 바뀌어도 그리기
     (zone_draw.ZoneDrawProbe)는 건드릴 필요가 없도록 파일까지 분리했다."""
@@ -55,9 +48,6 @@ class ZoneIntrusionProbe:
         forklift_gie_id: int,
         person_gie_id: int,
         homographies: list[Homography | None],
-        tiler_cols: int,
-        resize_width: int,
-        resize_height: int,
         source_names: list[str],
     ):
         self.class_id = class_id
@@ -65,12 +55,8 @@ class ZoneIntrusionProbe:
         self.forklift_gie_id = forklift_gie_id
         self.person_gie_id = person_gie_id
         self.homographies = homographies
-        self.tiler_cols = tiler_cols
-        self.resize_width = resize_width
-        self.resize_height = resize_height
         # source_id(정수) -> 채널명(control-api의 input.sources[].name, 예: "ch00"). 로그에
-        # 숫자 대신 실제 채널을 남기기 위한 것 — source_id가 소스 등록 순서와 대응한다는 전제는
-        # _tile_offset과 동일 (실제 박스에서 확인 필요).
+        # 숫자 대신 실제 채널을 남기기 위한 것.
         self.source_names = source_names
         # (source_id, tracker object_id) 중 지난 프레임까지 반경 안에 있던 사람들. 진입 "순간"에만
         # 로그를 남기기 위한 상태 — 매 프레임 다시 계산하면 서 있는 동안 로그가 계속 찍힌다.
@@ -91,17 +77,13 @@ class ZoneIntrusionProbe:
             homography = self.homographies[source_id] if source_id < len(self.homographies) else None
 
             if homography is not None:
-                offset_x, offset_y = _tile_offset(
-                    source_id, self.tiler_cols, self.resize_width, self.resize_height
-                )
                 forklift_local = []
                 person_entries = []  # [(object_id, local_point), ...]
 
                 l_obj = frame_meta.obj_meta_list
                 while l_obj is not None:
                     obj_meta = pyds.NvDsObjectMeta.cast(l_obj.data)
-                    px, py = _ground_contact_point(obj_meta)
-                    local_point = (px - offset_x, py - offset_y)
+                    local_point = _ground_contact_point(obj_meta)
                     if (
                         obj_meta.unique_component_id == self.forklift_gie_id
                         and obj_meta.class_id == self.class_id

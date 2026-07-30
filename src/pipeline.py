@@ -10,7 +10,7 @@ from gi.repository import Gst
 
 from config import resolve
 from logger import get_logger
-from sources import create_source_bin, on_pad_added
+from sources import RTSP_LATENCY_MS, create_source_bin, on_pad_added
 
 logger = get_logger(__name__)
 
@@ -37,11 +37,18 @@ def _build_streammux(num_sources: int, width: int, height: int, batched_push_tim
     streammux.set_property("batched-push-timeout", batched_push_timeout)
     streammux.set_property("live-source", True)
     streammux.set_property("drop-pipeline-eos", True)  # 소스 1개 EOS로 전체 죽는 것 방지
-    streammux.set_property("cache-buffer-timeout", batched_push_timeout * 2)
+
+    # cache-buffer-timeout이 nvurisrcbin의 자체 지터버퍼 지연(RTSP_LATENCY_MS)보다 작으면,
+    # 그 지연 안에 프레임을 못 낸 소스가 배치에서 통째로 빠질 수 있다(live-source=True라
+    # streammux가 늦은 프레임을 기다리지 않고 넘어간다). batched_push_timeout*2만으로는
+    # RTSP_LATENCY_MS(200ms)보다 작아질 수 있어서(예: 20fps -> 50ms*2=100ms), 소스 지연을
+    # 명시적으로 더해 항상 그보다 넉넉히 크게 잡는다.
+    cache_buffer_timeout = batched_push_timeout * 2 + RTSP_LATENCY_MS * 1000
+    streammux.set_property("cache-buffer-timeout", cache_buffer_timeout)
 
     logger.info(
-        "streammux: %dx%d, batch-size=%d, batched-push-timeout=%dus",
-        width, height, num_sources, batched_push_timeout,
+        "streammux: %dx%d, batch-size=%d, batched-push-timeout=%dus, cache-buffer-timeout=%dus",
+        width, height, num_sources, batched_push_timeout, cache_buffer_timeout,
     )
     return streammux
 

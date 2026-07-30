@@ -55,9 +55,12 @@ def add_zone_probes(
         return draw_probe, None
 
     person_gie_id = person_pgie.get_property("unique-id")
+    # source_id(정수) -> 채널명. sources_cfg 순서가 source_id와 대응한다는 전제는 homography와
+    # 동일 (control-api의 input.sources 순서 = streammux sink_i 요청 순서).
+    source_names = [src.get("name", f"source_{i}") for i, src in enumerate(sources_cfg)]
     intrusion_probe = ZoneIntrusionProbe(
         zone_cfg["class_id"], zone_cfg["radius_m"], forklift_gie_id, person_gie_id, homographies,
-        tiler_cols, resize_width, resize_height,
+        tiler_cols, resize_width, resize_height, source_names,
     )
     pad.add_probe(Gst.PadProbeType.BUFFER, intrusion_probe)
     logger.info("zone intrusion probe 등록: person(gie=%d)", person_gie_id)

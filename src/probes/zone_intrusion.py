@@ -51,6 +51,7 @@ class ZoneIntrusionProbe:
         tiler_cols: int,
         resize_width: int,
         resize_height: int,
+        source_names: list[str],
     ):
         self.class_id = class_id
         self.radius_m = radius_m
@@ -60,6 +61,10 @@ class ZoneIntrusionProbe:
         self.tiler_cols = tiler_cols
         self.resize_width = resize_width
         self.resize_height = resize_height
+        # source_id(정수) -> 채널명(control-api의 input.sources[].name, 예: "ch00"). 로그에
+        # 숫자 대신 실제 채널을 남기기 위한 것 — source_id가 소스 등록 순서와 대응한다는 전제는
+        # _tile_offset과 동일 (실제 박스에서 확인 필요).
+        self.source_names = source_names
         # (source_id, tracker object_id) 중 지난 프레임까지 반경 안에 있던 사람들. 진입 "순간"에만
         # 로그를 남기기 위한 상태 — 매 프레임 다시 계산하면 서 있는 동안 로그가 계속 찍힌다.
         self._inside: set[tuple[int, int]] = set()
@@ -110,9 +115,14 @@ class ZoneIntrusionProbe:
                         if inside_now:
                             still_inside.add(key)
                             if key not in self._inside:
+                                channel = (
+                                    self.source_names[source_id]
+                                    if source_id < len(self.source_names)
+                                    else f"source_{source_id}"
+                                )
                                 logger.warning(
-                                    "사람(track %d)이 forklift zone 안에 진입 (source=%d)",
-                                    object_id, source_id,
+                                    "사람(track %d)이 forklift zone 안에 진입 (channel=%s, source=%d)",
+                                    object_id, channel, source_id,
                                 )
 
             l_frame = l_frame.next

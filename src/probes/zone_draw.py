@@ -101,6 +101,8 @@ class ZoneDrawProbe:
         # source_id별로 "왜 이 소스는 그리지 않는지"를 한 번만 로그하기 위한 상태. 매 프레임
         # 찍으면 로그가 넘쳐서, 처음 마주친 프레임에서만 남긴다.
         self._warned_source_ids: set[int] = set()
+        # 디버그 로그 스로틀용 프레임 카운터 — 50프레임(=버퍼)에 한 번만 찍는다.
+        self._debug_frame_count = 0
 
     def _channel(self, source_id: int) -> str:
         return self.source_names[source_id] if source_id < len(self.source_names) else f"source_{source_id}"
@@ -109,6 +111,9 @@ class ZoneDrawProbe:
         gst_buffer = info.get_buffer()
         if gst_buffer is None:
             return Gst.PadProbeReturn.OK
+
+        self._debug_frame_count += 1
+        debug_this_frame = self._debug_frame_count % 50 == 0
 
         batch_meta = pyds.gst_buffer_get_nvds_batch_meta(hash(gst_buffer))
         l_frame = batch_meta.frame_meta_list
@@ -149,6 +154,18 @@ class ZoneDrawProbe:
                 l_obj = frame_meta.obj_meta_list
                 while l_obj is not None:
                     obj_meta = pyds.NvDsObjectMeta.cast(l_obj.data)
+
+                    if debug_this_frame:
+                        # 임시 디버그 — 매칭 여부와 상관없이 이 소스에 있는 모든 obj_meta를 그대로
+                        # 찍는다. ch01에서 forklift 매칭 자체가 되는지(gie/class_id가 기대한 값인지)
+                        # 확인하려는 것 — 원인 찾으면 제거.
+                        logger.info(
+                            "[디버그] channel=%s obj: class_id=%d, unique_component_id=%d "
+                            "(기대값: class_id=%d, gie=%d)",
+                            self._channel(source_id), obj_meta.class_id, obj_meta.unique_component_id,
+                            self.class_id, self.forklift_gie_id,
+                        )
+
                     if (
                         obj_meta.unique_component_id == self.forklift_gie_id
                         and obj_meta.class_id == self.class_id
@@ -162,12 +179,13 @@ class ZoneDrawProbe:
                         )
                         if ring_local:
                             ring_tile = [(x + offset_x, y + offset_y) for x, y in ring_local]
-                            # 임시 디버그 — _draw_ring에 넘기기 직전, 실제로 그리려는 좌표 그대로.
-                            # 원인 찾으면 제거.
-                            logger.info(
-                                "[디버그] channel=%s ring_tile=%s (bounds=%s)",
-                                self._channel(source_id), ring_tile, bounds,
-                            )
+                            if debug_this_frame:
+                                # 임시 디버그 — _draw_ring에 넘기기 직전, 실제로 그리려는 좌표 그대로.
+                                # 원인 찾으면 제거.
+                                logger.info(
+                                    "[디버그] channel=%s ring_tile=%s (bounds=%s)",
+                                    self._channel(source_id), ring_tile, bounds,
+                                )
                             display_meta = _draw_ring(
                                 batch_meta, frame_meta, display_meta, ring_tile, bounds
                             )

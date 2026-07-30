@@ -121,6 +121,16 @@ class ZoneDrawProbe:
         while l_frame is not None:
             frame_meta = pyds.NvDsFrameMeta.cast(l_frame.data)
             source_id = frame_meta.source_id
+
+            if debug_this_frame:
+                # 임시 디버그 — homography/매칭 여부와 무관하게, 이 버퍼의 batch_meta.frame_meta_list에
+                # 실제로 어떤 source_id들이 들어있는지, 객체가 몇 개 있는지 그대로 찍는다.
+                # ch01(source_id=1)이 애초에 여기 안 잡히는지부터 확인하려는 것 — 원인 찾으면 제거.
+                logger.info(
+                    "[디버그] frame_meta 발견: channel=%s, source_id=%d, num_obj_meta=%d",
+                    self._channel(source_id), source_id, frame_meta.num_obj_meta,
+                )
+
             homography = self.homographies[source_id] if source_id < len(self.homographies) else None
 
             if homography is None and source_id not in self._warned_source_ids:

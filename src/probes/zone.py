@@ -38,9 +38,14 @@ def add_zone_probes(
     if all(h is None for h in homographies):
         logger.warning("모든 소스에 호모그래피 캘리브레이션이 없다 — zone probe가 아무것도 그리지 않는다")
 
+    # source_id(정수) -> 채널명. sources_cfg 순서가 source_id와 대응한다는 전제는 homography와
+    # 동일 (control-api의 input.sources 순서 = streammux sink_i 요청 순서) — 이 전제 자체가
+    # 맞는지 확인하려고 draw/intrusion 둘 다 로그에 source_id 대신 이 이름을 찍게 한다.
+    source_names = [src.get("name", f"source_{i}") for i, src in enumerate(sources_cfg)]
+
     draw_probe = ZoneDrawProbe(
         zone_cfg["class_id"], zone_cfg["radius_m"], forklift_gie_id, homographies,
-        tiler_cols, resize_width, resize_height,
+        tiler_cols, resize_width, resize_height, source_names,
     )
     pad.add_probe(Gst.PadProbeType.BUFFER, draw_probe)
     logger.info(
@@ -55,9 +60,6 @@ def add_zone_probes(
         return draw_probe, None
 
     person_gie_id = person_pgie.get_property("unique-id")
-    # source_id(정수) -> 채널명. sources_cfg 순서가 source_id와 대응한다는 전제는 homography와
-    # 동일 (control-api의 input.sources 순서 = streammux sink_i 요청 순서).
-    source_names = [src.get("name", f"source_{i}") for i, src in enumerate(sources_cfg)]
     intrusion_probe = ZoneIntrusionProbe(
         zone_cfg["class_id"], zone_cfg["radius_m"], forklift_gie_id, person_gie_id, homographies,
         tiler_cols, resize_width, resize_height, source_names,

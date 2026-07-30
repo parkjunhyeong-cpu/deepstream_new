@@ -88,6 +88,7 @@ class ZoneDrawProbe:
         tiler_cols: int,
         resize_width: int,
         resize_height: int,
+        source_names: list[str],
     ):
         self.class_id = class_id
         self.radius_m = radius_m
@@ -96,9 +97,16 @@ class ZoneDrawProbe:
         self.tiler_cols = tiler_cols
         self.resize_width = resize_width
         self.resize_height = resize_height
+        # source_id(정수) -> 채널명(control-api의 input.sources[].name, 예: "ch00"). 로그에
+        # 숫자 대신 실제 채널을 남겨서 "source_id=0이 물리적으로 어느 카메라/타일 쪽인지"를
+        # 추측하지 않고 바로 알 수 있게 한다.
+        self.source_names = source_names
         # source_id별로 "왜 이 소스는 그리지 않는지"를 한 번만 로그하기 위한 상태. 매 프레임
         # 찍으면 로그가 넘쳐서, 처음 마주친 프레임에서만 남긴다.
         self._warned_source_ids: set[int] = set()
+
+    def _channel(self, source_id: int) -> str:
+        return self.source_names[source_id] if source_id < len(self.source_names) else f"source_{source_id}"
 
     def __call__(self, _pad, info):
         gst_buffer = info.get_buffer()
@@ -121,15 +129,16 @@ class ZoneDrawProbe:
                     # docstring 참고)가 실제로는 안 맞고 있다는 뜻일 수 있다. 특정 채널만 zone이
                     # 전혀 안 그려진다면 이게 원인일 가능성이 높다.
                     logger.warning(
-                        "source_id=%d가 등록된 소스 개수(%d)를 벗어남 — source_id가 config의 소스 "
-                        "순서와 다르게 배정되고 있는 것으로 추정. 이 소스는 zone을 그리지 않는다",
-                        source_id, len(self.homographies),
+                        "source_id=%d(channel=%s)가 등록된 소스 개수(%d)를 벗어남 — source_id가 "
+                        "config의 소스 순서와 다르게 배정되고 있는 것으로 추정. 이 소스는 zone을 "
+                        "그리지 않는다",
+                        source_id, self._channel(source_id), len(self.homographies),
                     )
                 else:
                     logger.warning(
-                        "source_id=%d: 호모그래피 캘리브레이션 없음(image_points/ground_points 비어있음) "
-                        "— 이 소스는 zone을 그리지 않는다",
-                        source_id,
+                        "source_id=%d(channel=%s): 호모그래피 캘리브레이션 없음"
+                        "(image_points/ground_points 비어있음) — 이 소스는 zone을 그리지 않는다",
+                        source_id, self._channel(source_id),
                     )
 
             if homography is not None:
@@ -166,9 +175,10 @@ class ZoneDrawProbe:
                                 # 잘못됐다는 뜻일 가능성이 높다. ring_tile 첫 점으로 대략적인
                                 # 위치를 가늠할 수 있게 로그에 남긴다.
                                 logger.warning(
-                                    "forklift zone이 타일 밖으로 계산됨 (source_id=%d, "
+                                    "forklift zone이 타일 밖으로 계산됨 (source_id=%d, channel=%s, "
                                     "ground_center=(%.2f, %.2f), 타일 밖 좌표 예시=(%.1f, %.1f))",
-                                    source_id, ground_center[0], ground_center[1],
+                                    source_id, self._channel(source_id),
+                                    ground_center[0], ground_center[1],
                                     ring_tile[0][0], ring_tile[0][1],
                                 )
 

@@ -14,6 +14,7 @@ set_state(NULL) 전환 시 종종 segfault 나는 문제(가이드 알려진 함
 """
 
 import argparse
+import os
 import signal
 import sys
 
@@ -31,6 +32,12 @@ from probes import attach_all_probes
 from webview import WebView
 
 logger = get_logger("main")
+
+# NVIDIA 플러그인이 set_state(NULL) 전환 중 종종 멈추거나 segfault한다(가이드 알려진 함정) —
+# SIGINT를 여러 번 줘도 이 블로킹 때문에 죽지 않는 사례가 있었다. get_state를 무기한 기다리지
+# 않고 이 시간 안에 안 끝나면 강제 종료한다.
+SHUTDOWN_TIMEOUT_SEC = 5
+SHUTDOWN_TIMEOUT_NS = SHUTDOWN_TIMEOUT_SEC * Gst.SECOND
 
 
 def bus_call(_bus, message, loop) -> bool:
@@ -122,6 +129,16 @@ def main() -> int:
         loop.run()
     finally:
         pipeline.set_state(Gst.State.NULL)
+        # get_state는 기본적으로 완료될 때까지 무기한 블로킹할 수 있다 — 타임아웃을 줘서 그 안에
+        # 안 끝나면 정상 종료를 포기한다. sys.exit()/return은 인터프리터 정리 과정을 거치는데
+        # NULL 전환이 멈춰 있으면 그 과정도 같이 멈추므로, os._exit()로 정리 없이 즉시 죽인다.
+        ret, _, _ = pipeline.get_state(SHUTDOWN_TIMEOUT_NS)
+        if ret != Gst.StateChangeReturn.SUCCESS:
+            logger.error(
+                "pipeline NULL 전환이 %d초 안에 끝나지 않음(ret=%s) — 강제 종료",
+                SHUTDOWN_TIMEOUT_SEC, ret,
+            )
+            os._exit(1)
         if webview is not None:
             webview.stop()
 

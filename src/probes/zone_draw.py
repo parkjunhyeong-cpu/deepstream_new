@@ -93,6 +93,9 @@ class ZoneDrawProbe:
         self.tiler_cols = tiler_cols
         self.resize_width = resize_width
         self.resize_height = resize_height
+        # source_id별로 "왜 이 소스는 그리지 않는지"를 한 번만 로그하기 위한 상태. 매 프레임
+        # 찍으면 로그가 넘쳐서, 처음 마주친 프레임에서만 남긴다.
+        self._warned_source_ids: set[int] = set()
 
     def __call__(self, _pad, info):
         gst_buffer = info.get_buffer()
@@ -106,6 +109,25 @@ class ZoneDrawProbe:
             frame_meta = pyds.NvDsFrameMeta.cast(l_frame.data)
             source_id = frame_meta.source_id
             homography = self.homographies[source_id] if source_id < len(self.homographies) else None
+
+            if homography is None and source_id not in self._warned_source_ids:
+                self._warned_source_ids.add(source_id)
+                if source_id >= len(self.homographies):
+                    # source_id가 homographies 리스트(=control-api의 input.sources 순서) 범위를
+                    # 벗어남 — "source_id가 소스 등록 순서와 그대로 대응한다"는 전제(tile_offset의
+                    # docstring 참고)가 실제로는 안 맞고 있다는 뜻일 수 있다. 특정 채널만 zone이
+                    # 전혀 안 그려진다면 이게 원인일 가능성이 높다.
+                    logger.warning(
+                        "source_id=%d가 등록된 소스 개수(%d)를 벗어남 — source_id가 config의 소스 "
+                        "순서와 다르게 배정되고 있는 것으로 추정. 이 소스는 zone을 그리지 않는다",
+                        source_id, len(self.homographies),
+                    )
+                else:
+                    logger.warning(
+                        "source_id=%d: 호모그래피 캘리브레이션 없음(image_points/ground_points 비어있음) "
+                        "— 이 소스는 zone을 그리지 않는다",
+                        source_id,
+                    )
 
             if homography is not None:
                 offset_x, offset_y = tile_offset(

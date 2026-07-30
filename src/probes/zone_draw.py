@@ -32,12 +32,10 @@ def _draw_ring(
     타일 영역(bounds = (xmin, ymin, xmax, ymax))으로 클리핑한다 — 안 그러면 호모그래피로
     역투영한 점이 화면 밖으로 나갈 때 도형이 일그러지거나, 옆 채널의 타일 영역까지 선이
     새어 들어갈 수 있다. 완전히 타일 밖인 선분은 건너뛴다. display_meta 하나가 다 못 담으면
-    새로 하나 더 뽑아 이어붙인다. (display_meta, 실제로 그린 선분 수)를 돌려준다 — 호출자가
-    프레임 끝에서 add_display_meta_to_frame 해야 하고, 그린 개수가 0이면(다각형 전체가 타일
-    밖으로 계산됐다는 뜻) 호출자가 이를 감지해 로그를 남길 수 있게 한다."""
+    새로 하나 더 뽑아 이어붙인다. 마지막으로 쓰던 display_meta를 돌려준다 — 호출자가 프레임
+    끝에서 add_display_meta_to_frame 해야 한다."""
     xmin, ymin, xmax, ymax = bounds
     n = len(points)
-    drawn = 0
     for i in range(n):
         x1, y1 = points[i]
         x2, y2 = points[(i + 1) % n]
@@ -56,8 +54,7 @@ def _draw_ring(
         line.line_width = 2
         line.line_color.set(1.0, 0.0, 0.0, 0.6)
         display_meta.num_lines += 1
-        drawn += 1
-    return display_meta, drawn
+    return display_meta
 
 
 class ZoneDrawProbe:
@@ -165,22 +162,15 @@ class ZoneDrawProbe:
                         )
                         if ring_local:
                             ring_tile = [(x + offset_x, y + offset_y) for x, y in ring_local]
-                            display_meta, drawn = _draw_ring(
+                            # 임시 디버그 — _draw_ring에 넘기기 직전, 실제로 그리려는 좌표 그대로.
+                            # 원인 찾으면 제거.
+                            logger.info(
+                                "[디버그] channel=%s ring_tile=%s (bounds=%s)",
+                                self._channel(source_id), ring_tile, bounds,
+                            )
+                            display_meta = _draw_ring(
                                 batch_meta, frame_meta, display_meta, ring_tile, bounds
                             )
-                            if drawn == 0:
-                                # conic 계산은 성공했지만(퇴화 아님) 결과 타원이 이 소스의 타일
-                                # 영역과 전혀 안 겹침 — 호모그래피가 이 forklift 위치에서 부정확한
-                                # 값을 냈거나(캘리브레이션 범위 밖으로 크게 벗어난 외삽) 스케일이
-                                # 잘못됐다는 뜻일 가능성이 높다. ring_tile 첫 점으로 대략적인
-                                # 위치를 가늠할 수 있게 로그에 남긴다.
-                                logger.warning(
-                                    "forklift zone이 타일 밖으로 계산됨 (source_id=%d, channel=%s, "
-                                    "ground_center=(%.2f, %.2f), 타일 밖 좌표 예시=(%.1f, %.1f))",
-                                    source_id, self._channel(source_id),
-                                    ground_center[0], ground_center[1],
-                                    ring_tile[0][0], ring_tile[0][1],
-                                )
 
                     l_obj = l_obj.next
 

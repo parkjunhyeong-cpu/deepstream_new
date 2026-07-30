@@ -8,7 +8,7 @@ from gi.repository import Gst
 import pyds
 from logger import get_logger
 
-from .homography import Homography
+from .util.homography import Homography
 
 logger = get_logger(__name__)
 

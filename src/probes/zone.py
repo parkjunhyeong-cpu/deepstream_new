@@ -9,7 +9,7 @@ from gi.repository import Gst
 
 from logger import get_logger
 
-from .homography import build_homographies
+from .util.homography import build_homographies
 from .zone_draw import ZoneDrawProbe
 from .zone_intrusion import ZoneIntrusionProbe
 
